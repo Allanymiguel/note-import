@@ -34,6 +34,18 @@ p.lede{
   margin:0 0 40px;
   max-width:52ch;
 }
+.steps{
+  margin:0 0 32px;
+  padding-left:22px;
+  color:var(--paper-dim);
+  font-size:0.92rem;
+  line-height:1.9;
+}
+.steps li::marker{
+  color:var(--gold);
+  font-family:'Lora',serif;
+}
+.steps strong{color:var(--paper); font-weight:600;}
 .import-grid{
   display:grid;
   grid-template-columns:1fr 1fr;
