@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mesclar notas — JW Library</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+<style>
+  :root{
+    --ink:      #12182b;
+    --paper:    #ece3cf;
+    --paper-dim:#a9a08b;
+    --gold:     #c9a227;
+    --gold-dim: #8a7423;
+    --line:     #2a3350;
+    --panel:    #171f38;
+    --error:    #d97a6c;
+    --ok:       #8fae7a;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--ink);
+    color:var(--paper);
+    font-family:'Inter',system-ui,sans-serif;
+    min-height:100vh;
+    padding:48px 20px 80px;
+  }
+  .wrap{max-width:640px;margin:0 auto;}
+  h1{
+    font-family:'Lora',serif;
+    font-weight:600;
+    font-size:1.9rem;
+    line-height:1.25;
+    margin:0 0 10px;
+    color:var(--paper);
+  }
+  p.lede{
+    color:var(--paper-dim);
+    font-size:0.98rem;
+    line-height:1.6;
+    margin:0 0 40px;
+    max-width:52ch;
+  }
+  .step-label{
+    font-family:'Lora',serif;
+    font-style:italic;
+    font-size:1rem;
+    color:var(--gold);
+    margin:0 0 10px;
+  }
+  .dropzone{
+    border:1px solid var(--line);
+    border-radius:2px;
+    padding:20px 22px;
+    margin-bottom:26px;
+    cursor:pointer;
+    transition:border-color .15s ease, background .15s ease;
+    position:relative;
+  }
+  .dropzone:hover, .dropzone.drag{
+    border-color:var(--gold-dim);
+    background:rgba(201,162,39,0.05);
+  }
+  .dropzone input{
+    position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%;
+  }
+  .dropzone .fname{
+    font-size:0.92rem;
+    color:var(--paper);
+    word-break:break-all;
+  }
+  .dropzone .fname.empty{color:var(--paper-dim); font-style:italic;}
+  .dropzone .hint{
+    font-size:0.78rem;
+    color:var(--paper-dim);
+    margin-top:4px;
+  }
+  button#mergeBtn{
+    font-family:'Inter',sans-serif;
+    font-weight:600;
+    font-size:0.95rem;
+    background:var(--gold);
+    color:#1a1406;
+    border:none;
+    border-radius:2px;
+    padding:13px 28px;
+    cursor:pointer;
+    width:100%;
+    margin-top:4px;
+    transition:background .15s ease, opacity .15s ease;
+  }
+  button#mergeBtn:hover:not(:disabled){background:#ddb43a;}
+  button#mergeBtn:disabled{opacity:0.4; cursor:not-allowed;}
+
+  #log{
+    margin-top:32px;
+    border-top:1px solid var(--line);
+    padding-top:20px;
+    font-size:0.88rem;
+    line-height:1.75;
+    color:var(--paper-dim);
+    display:none;
+  }
+  #log.show{display:block;}
+  #log .line{margin:0;}
+  #log .line.err{color:var(--error);}
+  #log .line.ok{color:var(--ok);}
+
+  .result{
+    margin-top:22px;
+    padding-top:22px;
+    border-top:1px solid var(--line);
+    display:none;
+  }
+  .result.show{display:block;}
+  .result h2{
+    font-family:'Lora',serif;
+    font-weight:600;
+    font-size:1.2rem;
+    margin:0 0 14px;
+    color:var(--paper);
+  }
+  ul.notes-added{margin:0 0 20px; padding-left:20px;}
+  ul.notes-added li{margin-bottom:8px; font-size:0.92rem; color:var(--paper);}
+  ul.notes-added li .content{color:var(--paper-dim); display:block; font-size:0.85rem;}
+  a.download-btn{
+    display:inline-block;
+    font-family:'Inter',sans-serif;
+    font-weight:600;
+    font-size:0.95rem;
+    background:transparent;
+    color:var(--gold);
+    border:1px solid var(--gold-dim);
+    border-radius:2px;
+    padding:12px 24px;
+    text-decoration:none;
+    transition:background .15s ease;
+  }
+  a.download-btn:hover{background:rgba(201,162,39,0.1);}
+
+  footer{
+    margin-top:56px;
+    font-size:0.78rem;
+    color:var(--paper-dim);
+    line-height:1.6;
+    border-top:1px solid var(--line);
+    padding-top:18px;
+  }
+  .spinner{
+    display:inline-block; width:13px; height:13px;
+    border:2px solid var(--paper-dim); border-top-color:var(--gold);
+    border-radius:50%; animation:spin .7s linear infinite; margin-right:8px; vertical-align:-2px;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Mesclar notas do JW Library</h1>
+  <p class="lede">Junta as notas de um arquivo <em>.jwlibrary</em> recebido dentro do seu, sem perder nada que já existe e sem duplicar. Tudo roda aqui no navegador — nenhum arquivo sai do seu aparelho.</p>
+
+  <p class="step-label">1. Seu arquivo</p>
+  <label class="dropzone" id="zoneMine">
+    <input type="file" id="fileMine" accept=".jwlibrary">
+    <div class="fname empty" id="nameMine">Toque para escolher seu backup .jwlibrary</div>
+    <div class="hint">O arquivo onde as notas novas vão entrar</div>
+  </label>
+
+  <p class="step-label">2. Arquivo recebido</p>
+  <label class="dropzone" id="zoneShared">
+    <input type="file" id="fileShared" accept=".jwlibrary">
+    <div class="fname empty" id="nameShared">Toque para escolher o .jwlibrary que te mandaram</div>
+    <div class="hint">De onde as notas novas vão ser copiadas</div>
+  </label>
+
+  <button id="mergeBtn" disabled>Mesclar notas</button>
+
+  <div id="log"></div>
+
+  <div class="result" id="result">
+    <h2 id="resultTitle"></h2>
+    <ul class="notes-added" id="notesAdded"></ul>
+    <a class="download-btn" id="downloadLink" download>Baixar arquivo mesclado</a>
+  </div>
+
+  <footer>
+    Feito para uso pessoal entre amigos e familiares. Guarde sempre o arquivo original antes de mesclar — esta ferramenta nunca altera os arquivos que você selecionou, ela gera um arquivo novo.
+  </footer>
+</div>
+
+<script>
+let mineFile = null, sharedFile = null;
+let SQL = null;
+
+const $ = (id) => document.getElementById(id);
+
+function setFileName(el, file){
+  el.textContent = file ? file.name : el.dataset.placeholder;
+  el.classList.toggle('empty', !file);
+}
+$('nameMine').dataset.placeholder = $('nameMine').textContent;
+$('nameShared').dataset.placeholder = $('nameShared').textContent;
+
+$('fileMine').addEventListener('change', e => {
+  mineFile = e.target.files[0] || null;
+  setFileName($('nameMine'), mineFile);
+  updateButton();
+});
+$('fileShared').addEventListener('change', e => {
+  sharedFile = e.target.files[0] || null;
+  setFileName($('nameShared'), sharedFile);
+  updateButton();
+});
+
+function updateButton(){
+  $('mergeBtn').disabled = !(mineFile && sharedFile);
+}
+
+function log(msg, cls){
+  const logEl = $('log');
+  logEl.classList.add('show');
+  const p = document.createElement('p');
+  p.className = 'line' + (cls ? ' ' + cls : '');
+  p.textContent = msg;
+  logEl.appendChild(p);
+}
+
+function clearLog(){
+  $('log').innerHTML = '';
+  $('log').classList.remove('show');
+  $('result').classList.remove('show');
+}
+
+// ---------- helpers de SQL sobre sql.js ----------
+function queryAll(db, sql, params = []){
+  const stmt = db.prepare(sql);
+  stmt.bind(params);
+  const rows = [];
+  while (stmt.step()) rows.push(stmt.getAsObject());
+  stmt.free();
+  return rows;
+}
+function queryOne(db, sql, params = []){
+  const rows = queryAll(db, sql, params);
+  return rows.length ? rows[0] : null;
+}
+function run(db, sql, params = []){
+  db.run(sql, params);
+}
+function lastId(db){
+  return db.exec('SELECT last_insert_rowid()')[0].values[0][0];
+}
+
+// ---------- lógica de merge (mesma regra do script Python) ----------
+function findOrCreateLocation(target, source, sourceLocationId, cache){
+  if (sourceLocationId === null || sourceLocationId === undefined) return null;
+  if (cache.has(sourceLocationId)) return cache.get(sourceLocationId);
+
+  const loc = queryOne(source, 'SELECT * FROM Location WHERE LocationId=?', [sourceLocationId]);
+  const existing = queryOne(target,
+    `SELECT LocationId FROM Location
+     WHERE BookNumber IS ? AND ChapterNumber IS ? AND KeySymbol IS ?
+       AND MepsLanguage IS ? AND Type IS ? AND DocumentId IS ? AND Track IS ?`,
+    [loc.BookNumber, loc.ChapterNumber, loc.KeySymbol, loc.MepsLanguage, loc.Type, loc.DocumentId, loc.Track]
+  );
+  if (existing){ cache.set(sourceLocationId, existing.LocationId); return existing.LocationId; }
+
+  run(target,
+    `INSERT INTO Location (BookNumber, ChapterNumber, DocumentId, Track, IssueTagNumber, KeySymbol, MepsLanguage, Type, Title, Specialty, Edition)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    [loc.BookNumber, loc.ChapterNumber, loc.DocumentId, loc.Track, loc.IssueTagNumber, loc.KeySymbol, loc.MepsLanguage, loc.Type, loc.Title, loc.Specialty, loc.Edition]
+  );
+  const newId = lastId(target);
+  cache.set(sourceLocationId, newId);
+  return newId;
+}
+
+function findOrCreateUserMark(target, source, sourceUserMarkId, newLocationId, cache){
+  if (sourceUserMarkId === null || sourceUserMarkId === undefined) return null;
+  if (cache.has(sourceUserMarkId)) return cache.get(sourceUserMarkId);
+
+  const um = queryOne(source, 'SELECT * FROM UserMark WHERE UserMarkId=?', [sourceUserMarkId]);
+  const existing = queryOne(target, 'SELECT UserMarkId FROM UserMark WHERE UserMarkGuid=?', [um.UserMarkGuid]);
+  if (existing){ cache.set(sourceUserMarkId, existing.UserMarkId); return existing.UserMarkId; }
+
+  run(target,
+    'INSERT INTO UserMark (ColorIndex, LocationId, StyleIndex, UserMarkGuid, Version) VALUES (?,?,?,?,?)',
+    [um.ColorIndex, newLocationId, um.StyleIndex, um.UserMarkGuid, um.Version]
+  );
+  const newId = lastId(target);
+  cache.set(sourceUserMarkId, newId);
+
+  const ranges = queryAll(source, 'SELECT * FROM BlockRange WHERE UserMarkId=?', [sourceUserMarkId]);
+  for (const br of ranges){
+    run(target,
+      'INSERT INTO BlockRange (BlockType, Identifier, StartToken, EndToken, UserMarkId) VALUES (?,?,?,?,?)',
+      [br.BlockType, br.Identifier, br.StartToken, br.EndToken, newId]
+    );
+  }
+  return newId;
+}
+
+function findOrCreateTag(target, source, sourceTagId, cache){
+  if (cache.has(sourceTagId)) return cache.get(sourceTagId);
+  const tag = queryOne(source, 'SELECT Type, Name FROM Tag WHERE TagId=?', [sourceTagId]);
+  const existing = queryOne(target, 'SELECT TagId FROM Tag WHERE Type=? AND Name=?', [tag.Type, tag.Name]);
+  if (existing){ cache.set(sourceTagId, existing.TagId); return existing.TagId; }
+  run(target, 'INSERT INTO Tag (Type, Name) VALUES (?,?)', [tag.Type, tag.Name]);
+  const newId = lastId(target);
+  cache.set(sourceTagId, newId);
+  return newId;
+}
+
+function mergeNotes(target, source){
+  const existingGuids = new Set(queryAll(target, 'SELECT Guid FROM Note').map(r => r.Guid));
+  const sourceNotes = queryAll(source, 'SELECT * FROM Note');
+
+  const locationCache = new Map(), userMarkCache = new Map(), tagCache = new Map();
+  const added = [], skipped = [];
+
+  for (const note of sourceNotes){
+    if (existingGuids.has(note.Guid)){ skipped.push(note.Guid); continue; }
+
+    const newLocationId = findOrCreateLocation(target, source, note.LocationId, locationCache);
+    const newUserMarkId = findOrCreateUserMark(target, source, note.UserMarkId, newLocationId, userMarkCache);
+
+    run(target,
+      `INSERT INTO Note (Guid, UserMarkId, LocationId, Title, Content, LastModified, Created, BlockType, BlockIdentifier)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [note.Guid, newUserMarkId, newLocationId, note.Title, note.Content, note.LastModified, note.Created, note.BlockType, note.BlockIdentifier]
+    );
+    const newNoteId = lastId(target);
+
+    const tagMaps = queryAll(source, 'SELECT TagId FROM TagMap WHERE NoteId=?', [note.NoteId]);
+    for (const tm of tagMaps){
+      const newTagId = findOrCreateTag(target, source, tm.TagId, tagCache);
+      const posRow = queryOne(target, 'SELECT COALESCE(MAX(Position), -1) + 1 AS p FROM TagMap WHERE TagId=?', [newTagId]);
+      run(target, 'INSERT INTO TagMap (PlaylistItemId, LocationId, NoteId, TagId, Position) VALUES (NULL, NULL, ?, ?, ?)', [newNoteId, newTagId, posRow.p]);
+    }
+
+    added.push({ guid: note.Guid, title: note.Title, content: note.Content });
+  }
+
+  return { added, skipped };
+}
+
+// ---------- fluxo principal ----------
+async function readFileAsUint8Array(file){
+  const buf = await file.arrayBuffer();
+  return new Uint8Array(buf);
+}
+
+async function loadDbFromZip(bytes, label){
+  const zip = await JSZip.loadAsync(bytes);
+  const dbEntry = zip.file('userData.db');
+  if (!dbEntry){
+    throw new Error(`Não encontrei "userData.db" dentro de ${label}. Confirme que é um backup .jwlibrary válido (e não um .zip renomeado errado).`);
+  }
+  const dbBytes = await dbEntry.async('uint8array');
+  const db = new SQL.Database(dbBytes);
+  const hasNoteTable = queryOne(db, "SELECT name FROM sqlite_master WHERE type='table' AND name='Note'");
+  if (!hasNoteTable){
+    throw new Error(`O arquivo ${label} não parece ter a estrutura esperada do JW Library.`);
+  }
+  return { db, zip };
+}
+
+$('mergeBtn').addEventListener('click', async () => {
+  clearLog();
+  $('mergeBtn').disabled = true;
+  log('Carregando bibliotecas...');
+
+  try{
+    if (!SQL){
+      SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}` });
+    }
+
+    log('Lendo ' + mineFile.name + '...');
+    const mineBytes = await readFileAsUint8Array(mineFile);
+    const { db: targetDb, zip: mineZip } = await loadDbFromZip(mineBytes, 'seu arquivo');
+
+    log('Lendo ' + sharedFile.name + '...');
+    const sharedBytes = await readFileAsUint8Array(sharedFile);
+    const { db: sourceDb } = await loadDbFromZip(sharedBytes, 'arquivo recebido');
+
+    log('Comparando notas...');
+    const report = mergeNotes(targetDb, sourceDb);
+
+    log('Verificando integridade dos dados...');
+    const problems = queryAll(targetDb, 'PRAGMA foreign_key_check');
+    if (problems.length > 0){
+      throw new Error('Inconsistência detectada nos dados, o processo foi cancelado por segurança. Nenhum arquivo foi alterado.');
+    }
+
+    log(`${report.added.length} nota(s) nova(s), ${report.skipped.length} já existiam e foram ignoradas.`, 'ok');
+    log('Gerando arquivo final...');
+
+    const newDbBytes = targetDb.export();
+    mineZip.file('userData.db', newDbBytes);
+    const blob = await mineZip.generateAsync({ type: 'blob' });
+
+    const url = URL.createObjectURL(blob);
+    const outName = mineFile.name.replace(/\.jwlibrary$/i, '') + '_mesclado.jwlibrary';
+    const dl = $('downloadLink');
+    dl.href = url;
+    dl.download = outName;
+    dl.textContent = 'Baixar ' + outName;
+
+    $('resultTitle').textContent = report.added.length > 0
+      ? `${report.added.length} nota(s) importada(s):`
+      : 'Nenhuma nota nova encontrada';
+    const ul = $('notesAdded');
+    ul.innerHTML = '';
+    for (const n of report.added){
+      const li = document.createElement('li');
+      const title = document.createElement('div');
+      title.textContent = n.title || '(sem título)';
+      const content = document.createElement('span');
+      content.className = 'content';
+      content.textContent = (n.content || '').slice(0, 90);
+      li.appendChild(title);
+      li.appendChild(content);
+      ul.appendChild(li);
+    }
+    $('result').classList.add('show');
+
+    targetDb.close();
+    sourceDb.close();
+  } catch(err){
+    console.error(err);
+    log('Erro: ' + err.message, 'err');
+  } finally {
+    $('mergeBtn').disabled = false;
+  }
+});
+</script>
+</body>
+</html>
