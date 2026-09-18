@@ -281,7 +281,7 @@
       }
       const issue = issueGroups.get(issueKey);
 
-      const docKey = loc.DocumentId === null || loc.DocumentId === undefined ? ' ' : String(loc.DocumentId);
+      const docKey = loc.DocumentId === null || loc.DocumentId === undefined ? '\u0000' : String(loc.DocumentId);
       if (!issue.subgroups.has(docKey)) {
         issue.subgroups.set(docKey, { locationIds: new Set(), count: 0, firstLocationId: locId });
       }
