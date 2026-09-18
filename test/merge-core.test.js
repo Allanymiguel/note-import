@@ -317,3 +317,81 @@ test('listFilteredPublicationGroups: groups by publication, sorts by most recent
     ['A Sentinela - janeiro/2025', 'A Sentinela - novembro/2024', 'A Sentinela - setembro/2024', 'A Sentinela - julho/2024', 'A Sentinela - maio/2024']
   );
 });
+
+test('listFilteredPublicationGroups: single DocumentId in the issue keeps the plain label', async () => {
+  const source = await createEmptyDb();
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 424242, Title: 'Algum título' }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'g1' }));
+
+  const groups = MergeCore.listFilteredPublicationGroups(source);
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].label, 'A Sentinela - julho/2026', 'com um único DocumentId, nenhum sufixo de artigo deve ser adicionado');
+});
+
+test('listFilteredPublicationGroups: two DocumentIds, one with Title and one with nothing, resolve to (a) and (c)', async () => {
+  const source = await createEmptyDb();
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 111111, Title: 'Find Comfort in the Book of Isaiah' }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'g1' }));
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 2, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 222222, Title: null }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 2, LocationId: 2, UserMarkGuid: 'g2' }));
+
+  const groups = MergeCore.listFilteredPublicationGroups(source);
+  const labels = groups.map(g => g.label);
+
+  assert.equal(groups.length, 2);
+  assert.ok(labels.includes('A Sentinela - julho/2026 | Find Comfort in the Book of Isaiah'));
+  assert.ok(labels.includes('A Sentinela - julho/2026 | Artigo sem título'));
+
+  for (const label of labels) {
+    assert.ok(!label.includes('111111') && !label.includes('222222'), 'o DocumentId cru nunca deve aparecer no rótulo');
+  }
+});
+
+test('listFilteredPublicationGroups: DocumentId without Title but with a Note uses a truncated content excerpt', async () => {
+  const source = await createEmptyDb();
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 333333, Title: 'Com título' }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'g1' }));
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 2, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 444444, Title: null }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 2, LocationId: 2, UserMarkGuid: 'g2' }));
+  const longContent = 'o que a fé exige de nós quando enfrentamos provações muito difíceis na vida';
+  insertRow(source, 'Note', noteDefaults({ NoteId: 1, Guid: 'note-1', LocationId: 2, Content: longContent }));
+
+  const groups = MergeCore.listFilteredPublicationGroups(source);
+  const noteLabel = groups.map(g => g.label).find(l => l.includes('Nota:'));
+
+  assert.ok(noteLabel, 'deve haver um item usando o critério (b)');
+  const expectedExcerpt = longContent.slice(0, 50).trimEnd() + '...';
+  assert.equal(noteLabel, `A Sentinela - julho/2026 | Nota: "${expectedExcerpt}"`);
+  assert.ok(!noteLabel.includes('444444'));
+});
+
+test('listFilteredPublicationGroups: three+ DocumentIds with no Title and no Note get sequential letters (A, B, C)', async () => {
+  const source = await createEmptyDb();
+
+  const docIds = [555001, 555002, 555003];
+  let locId = 1, umId = 1;
+  for (const docId of docIds) {
+    insertRow(source, 'Location', locationDefaults({ LocationId: locId, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: docId, Title: null }));
+    insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: umId, LocationId: locId, UserMarkGuid: `g${umId}` }));
+    locId++; umId++;
+  }
+
+  const groups = MergeCore.listFilteredPublicationGroups(source);
+  const labels = groups.map(g => g.label).sort();
+
+  assert.deepEqual(labels, [
+    'A Sentinela - julho/2026 | Artigo sem título (A)',
+    'A Sentinela - julho/2026 | Artigo sem título (B)',
+    'A Sentinela - julho/2026 | Artigo sem título (C)'
+  ]);
+
+  for (const docId of docIds) {
+    assert.ok(!labels.some(l => l.includes(String(docId))), `DocumentId ${docId} não deve aparecer cru em nenhum rótulo`);
+  }
+});

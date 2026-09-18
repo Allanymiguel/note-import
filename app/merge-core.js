@@ -199,12 +199,63 @@
     return `${friendly} - ${monthName}/${year}`;
   }
 
+  // Corta um texto em até maxLen caracteres, terminando com "..." se cortou
+  // no meio — usado só como pista visual, nunca como o "título" real.
+  function truncateContent(content, maxLen) {
+    const trimmed = content.trim();
+    if (trimmed.length <= maxLen) return trimmed;
+    return trimmed.slice(0, maxLen).trimEnd() + '...';
+  }
+
+  // Primeiro Title não vazio entre as Locations de um subgrupo (mesmo
+  // DocumentId), escolhido de forma determinística (menor LocationId).
+  function findFirstNonEmptyTitle(source, locationIds) {
+    const ids = Array.from(locationIds);
+    if (!ids.length) return null;
+    const placeholders = ids.map(() => '?').join(',');
+    const row = queryOne(
+      source,
+      `SELECT Title FROM Location WHERE LocationId IN (${placeholders}) AND Title IS NOT NULL AND TRIM(Title) <> '' ORDER BY LocationId ASC LIMIT 1`,
+      ids
+    );
+    return row ? row.Title : null;
+  }
+
+  // Primeiro Note.Content não vazio ligado a alguma Location do subgrupo.
+  function findFirstNoteContent(source, locationIds) {
+    const ids = Array.from(locationIds);
+    if (!ids.length) return null;
+    const placeholders = ids.map(() => '?').join(',');
+    const row = queryOne(
+      source,
+      `SELECT Content FROM Note WHERE LocationId IN (${placeholders}) AND Content IS NOT NULL AND TRIM(Content) <> '' ORDER BY NoteId ASC LIMIT 1`,
+      ids
+    );
+    return row ? row.Content : null;
+  }
+
+  // Resolve como identificar (só para exibição) o artigo de um subgrupo
+  // dentro de uma edição com múltiplos DocumentId, na ordem de prioridade:
+  // Title real > trecho de uma Note > rótulo genérico honesto. NUNCA usa o
+  // DocumentId cru, que é só um id interno sem relação com a numeração
+  // impressa do artigo.
+  function resolveArticleSuffix(source, subgroup) {
+    const title = findFirstNonEmptyTitle(source, subgroup.locationIds);
+    if (title) return { kind: 'title', text: title };
+    const noteContent = findFirstNoteContent(source, subgroup.locationIds);
+    if (noteContent) return { kind: 'note', text: truncateContent(noteContent, 50) };
+    return { kind: 'generic' };
+  }
+
   // Lista, para a tela de escolha de artigo específico, apenas grifos de
   // publicações periódicas conhecidas (Sentinela/Apostila/Ande Corajosamente
-  // com Deus), agrupados por edição (KeySymbol + IssueTagNumber) e limitados
-  // às `maxPerPublication` edições mais recentes de cada publicação. Isso é
-  // só um filtro de EXIBIÇÃO: não descarta nem altera nenhum dado do arquivo
-  // de origem, só o que aparece pré-selecionável nessa tela.
+  // com Deus), agrupados por edição (KeySymbol + IssueTagNumber) e, dentro
+  // de cada edição, por artigo (DocumentId) quando houver mais de um. Isso é
+  // só um filtro/rótulo de EXIBIÇÃO: não descarta nem altera nenhum dado do
+  // arquivo de origem, só o que aparece pré-selecionável nessa tela. O
+  // limite de `maxPerPublication` é aplicado à lista já expandida por
+  // artigo, então uma edição com vários artigos pode sozinha consumir a
+  // cota de itens mais recentes daquela publicação.
   function listFilteredPublicationGroups(source, maxPerPublication = 5) {
     const allowedKeys = Object.keys(PUBLICATION_LABELS);
 
@@ -215,7 +266,8 @@
       countByLocation.set(m.LocationId, (countByLocation.get(m.LocationId) || 0) + 1);
     }
 
-    const issueGroups = new Map(); // `${KeySymbol}:${IssueTagNumber}` -> { keySymbol, issueTagNumber, locationIds, count }
+    // issueKey (`${KeySymbol}:${IssueTagNumber}`) -> { keySymbol, issueTagNumber, subgroups: Map(docKey -> {...}) }
+    const issueGroups = new Map();
     for (const locId of countByLocation.keys()) {
       const loc = queryOne(source, 'SELECT * FROM Location WHERE LocationId=?', [locId]);
       if (!loc) continue;
@@ -224,38 +276,84 @@
 
       const issueKey = `${loc.KeySymbol}:${loc.IssueTagNumber}`;
       if (!issueGroups.has(issueKey)) {
-        issueGroups.set(issueKey, {
-          keySymbol: loc.KeySymbol,
-          issueTagNumber: loc.IssueTagNumber,
-          locationIds: new Set(),
-          count: 0
-        });
+        issueGroups.set(issueKey, { keySymbol: loc.KeySymbol, issueTagNumber: loc.IssueTagNumber, subgroups: new Map() });
       }
-      const g = issueGroups.get(issueKey);
-      g.locationIds.add(locId);
-      g.count += countByLocation.get(locId);
+      const issue = issueGroups.get(issueKey);
+
+      const docKey = loc.DocumentId === null || loc.DocumentId === undefined ? ' ' : String(loc.DocumentId);
+      if (!issue.subgroups.has(docKey)) {
+        issue.subgroups.set(docKey, { locationIds: new Set(), count: 0, firstLocationId: locId });
+      }
+      const sub = issue.subgroups.get(docKey);
+      sub.locationIds.add(locId);
+      sub.count += countByLocation.get(locId);
+      if (locId < sub.firstLocationId) sub.firstLocationId = locId;
     }
 
     const byKeySymbol = new Map();
-    for (const g of issueGroups.values()) {
-      if (!byKeySymbol.has(g.keySymbol)) byKeySymbol.set(g.keySymbol, []);
-      byKeySymbol.get(g.keySymbol).push(g);
+    for (const issue of issueGroups.values()) {
+      if (!byKeySymbol.has(issue.keySymbol)) byKeySymbol.set(issue.keySymbol, []);
+      byKeySymbol.get(issue.keySymbol).push(issue);
     }
 
     const result = [];
     for (const keySymbol of allowedKeys) {
-      const mostRecentFirst = (byKeySymbol.get(keySymbol) || [])
-        .sort((a, b) => b.issueTagNumber - a.issueTagNumber)
-        .slice(0, maxPerPublication);
+      const issuesMostRecentFirst = (byKeySymbol.get(keySymbol) || [])
+        .sort((a, b) => b.issueTagNumber - a.issueTagNumber);
 
-      for (const g of mostRecentFirst) {
-        result.push({
-          key: `${g.keySymbol}:${g.issueTagNumber}`,
-          label: formatIssueLabel(g.keySymbol, g.issueTagNumber),
-          count: g.count,
-          locationIds: Array.from(g.locationIds)
-        });
+      const items = [];
+      for (const issue of issuesMostRecentFirst) {
+        if (items.length >= maxPerPublication) break;
+
+        const issueLabel = formatIssueLabel(issue.keySymbol, issue.issueTagNumber);
+        const subgroups = Array.from(issue.subgroups.values())
+          .sort((a, b) => a.firstLocationId - b.firstLocationId);
+
+        if (subgroups.length === 1) {
+          const sub = subgroups[0];
+          items.push({
+            key: `${issue.keySymbol}:${issue.issueTagNumber}:${sub.firstLocationId}`,
+            label: issueLabel,
+            count: sub.count,
+            locationIds: Array.from(sub.locationIds)
+          });
+          continue;
+        }
+
+        // Mais de um artigo na mesma edição: cada um precisa de uma pista
+        // de identificação própria, sem nunca expor o DocumentId cru.
+        const resolved = subgroups.map(sub => resolveArticleSuffix(source, sub));
+        const genericIndexes = resolved
+          .map((r, i) => (r.kind === 'generic' ? i : -1))
+          .filter(i => i !== -1);
+
+        for (let i = 0; i < subgroups.length; i++) {
+          if (items.length >= maxPerPublication) break;
+          const sub = subgroups[i];
+          const r = resolved[i];
+
+          let suffix;
+          if (r.kind === 'title') {
+            suffix = r.text;
+          } else if (r.kind === 'note') {
+            suffix = `Nota: "${r.text}"`;
+          } else {
+            const letterIndex = genericIndexes.indexOf(i);
+            suffix = genericIndexes.length > 1
+              ? `Artigo sem título (${String.fromCharCode(65 + letterIndex)})`
+              : 'Artigo sem título';
+          }
+
+          items.push({
+            key: `${issue.keySymbol}:${issue.issueTagNumber}:${sub.firstLocationId}`,
+            label: `${issueLabel} | ${suffix}`,
+            count: sub.count,
+            locationIds: Array.from(sub.locationIds)
+          });
+        }
       }
+
+      result.push(...items.slice(0, maxPerPublication));
     }
     return result;
   }
