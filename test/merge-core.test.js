@@ -268,6 +268,35 @@ test('formatIssueLabel: formats "{Publicação} - {mês}/{ano}" for mwb, w and w
   assert.equal(MergeCore.formatIssueLabel('wcg', 20250100), 'Ande Corajosamente com Deus - janeiro/2025');
 });
 
+test('formatIssueLabel: IssueTagNumber 0 (livro/brochura sem edição real) omite a data, não mostra "mês 0/0"', () => {
+  assert.equal(MergeCore.formatIssueLabel('wcg', 0), 'Ande Corajosamente com Deus');
+  assert.doesNotMatch(MergeCore.formatIssueLabel('wcg', 0), /mês/);
+});
+
+test('listFilteredPublicationGroups: IssueTagNumber 0 não gera "mês 0/0" e ainda diferencia os capítulos por subgrupo', async () => {
+  const source = await createEmptyDb();
+
+  // wcg é um livro, não uma revista periódica: IssueTagNumber vem 0 (não null),
+  // mas os capítulos ainda são distinguíveis pelo DocumentId.
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'wcg', IssueTagNumber: 0, DocumentId: 111, Title: null }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'g1' }));
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 2, KeySymbol: 'wcg', IssueTagNumber: 0, DocumentId: 222, Title: null }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 2, LocationId: 2, UserMarkGuid: 'g2' }));
+
+  const groups = MergeCore.listFilteredPublicationGroups(source);
+  const labels = groups.map(g => g.label);
+
+  assert.equal(groups.length, 2);
+  for (const label of labels) {
+    assert.doesNotMatch(label, /mês\s*0\/0/, 'não deve exibir "mês 0/0" para publicações sem edição real');
+  }
+  assert.deepEqual(labels.sort(), [
+    'Ande Corajosamente com Deus | Artigo sem título (A)',
+    'Ande Corajosamente com Deus | Artigo sem título (B)'
+  ]);
+});
+
 test('listFilteredPublicationGroups: only lists mwb/w/wcg, excludes other KeySymbols', async () => {
   const source = await createEmptyDb();
 
