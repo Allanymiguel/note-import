@@ -6,7 +6,7 @@ Tudo roda **inteiramente no navegador**. Os dois `.jwlibrary` selecionados são 
 
 ## Como usar
 
-1. Abra [`app/mesclar_notas.html`](app/mesclar_notas.html) no navegador (funciona direto via `file://`, sem precisar de servidor).
+1. Abra [`app/index.html`](app/index.html) no navegador (funciona direto via `file://`, sem precisar de servidor).
 2. Faça backup do seu JW Library e do dispositivo de quem vai te enviar as notas (`.jwlibrary`).
 3. Selecione os dois arquivos na página: o seu (destinatário) e o recebido (remetente).
 4. Escolha o que importar:
@@ -23,7 +23,7 @@ A ferramenta nunca duplica dados: notas e grifos já existentes (mesmo `Guid`/`U
 
 ```
 app/
-  mesclar_notas.html   página principal (UI + orquestração do fluxo)
+  index.html           página principal (UI + orquestração do fluxo)
   mesclar_notas.css    estilos
   merge-core.js        lógica de merge (SQL sobre sql.js), compartilhada entre navegador e Node
 test/

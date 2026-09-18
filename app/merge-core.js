@@ -1,6 +1,6 @@
 /**
  * Core merge logic for JW Library .jwlibrary backups.
- * Shared between the browser (mesclar_notas.html, loaded via <script>) and
+ * Shared between the browser (index.html, loaded via <script>) and
  * the Node test suite (required directly). No DOM/browser APIs are used
  * here so it works unmodified in both environments.
  */
