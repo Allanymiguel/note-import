@@ -58,6 +58,36 @@ test('mergeNotes: merges only new notes, skips duplicates by Guid, never reuses 
   assert.deepEqual(fkProblems(target), []);
 });
 
+test('mergeNotes ("Importar apenas notas"): never imports a pure highlight without a Note', async () => {
+  const target = await createEmptyDb();
+  const source = await createEmptyDb();
+
+  // Grifo puro (sem nenhuma Note apontando para ele) — não deve entrar no destino.
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, Title: 'Artigo com grifo solto' }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'solto-um' }));
+  insertRow(source, 'BlockRange', { BlockRangeId: 1, BlockType: 1, Identifier: 1, StartToken: 0, EndToken: 5, UserMarkId: 1 });
+
+  // Grifo COM nota, na mesma origem — esse sim deve entrar (via a nota).
+  insertRow(source, 'Location', locationDefaults({ LocationId: 2, Title: 'Artigo com nota' }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 2, LocationId: 2, UserMarkGuid: 'com-nota-um' }));
+  insertRow(source, 'BlockRange', { BlockRangeId: 2, BlockType: 1, Identifier: 1, StartToken: 0, EndToken: 5, UserMarkId: 2 });
+  insertRow(source, 'Note', noteDefaults({ NoteId: 1, Guid: 'note-guid', UserMarkId: 2, LocationId: 2, Title: 'Comentário' }));
+
+  const report = MergeCore.mergeNotes(target, source);
+
+  assert.equal(report.added.length, 1);
+  assert.equal(countRows(target, 'Note'), 1);
+  assert.equal(countRows(target, 'UserMark'), 1, 'só o UserMark ligado à nota deve ser copiado');
+
+  const importedMark = MergeCore.queryOne(target, 'SELECT * FROM UserMark LIMIT 1');
+  assert.equal(importedMark.UserMarkGuid, 'com-nota-um');
+
+  const soltoStillAbsent = MergeCore.queryOne(target, "SELECT * FROM UserMark WHERE UserMarkGuid='solto-um'");
+  assert.equal(soltoStillAbsent, null);
+
+  assert.deepEqual(fkProblems(target), []);
+});
+
 test('mergeSelectedHighlights: imports a "pure" highlight (no note) correctly', async () => {
   const target = await createEmptyDb();
   const source = await createEmptyDb();

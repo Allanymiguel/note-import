@@ -48,6 +48,10 @@
       <span>Importar tudo (recomendado)<span class="mode-hint">Mescla todas as notas e grifos do arquivo recebido</span></span>
     </label>
     <label>
+      <input type="radio" name="importMode" value="notes" id="modeNotes">
+      <span>Importar apenas notas<span class="mode-hint">Mescla as notas escritas, suas tags e os grifos ligados a elas — ignora grifos soltos, sem nota</span></span>
+    </label>
+    <label>
       <input type="radio" name="importMode" value="selected" id="modeSelected">
       <span>Importar só os grifos de um artigo específico<span class="mode-hint">Escolha exatamente o que copiar do arquivo recebido</span></span>
     </label>
@@ -146,7 +150,9 @@ $('fileShared').addEventListener('change', e => {
 document.querySelectorAll('input[name=importMode]').forEach(radio => {
   radio.addEventListener('change', () => {
     mode = document.querySelector('input[name=importMode]:checked').value;
-    $('mergeBtn').textContent = mode === 'selected' ? 'Importar selecionados' : 'Mesclar notas';
+    $('mergeBtn').textContent = mode === 'selected'
+      ? 'Importar selecionados'
+      : (mode === 'notes' ? 'Importar notas' : 'Mesclar notas');
     if (mode === 'selected'){
       $('groupPicker').classList.add('show');
       if (mineFile && sharedFile) loadGroupsIntoPicker();
