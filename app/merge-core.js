@@ -283,7 +283,7 @@
 
       const docKey = loc.DocumentId === null || loc.DocumentId === undefined ? '\u0000' : String(loc.DocumentId);
       if (!issue.subgroups.has(docKey)) {
-        issue.subgroups.set(docKey, { locationIds: new Set(), count: 0, firstLocationId: locId });
+        issue.subgroups.set(docKey, { locationIds: new Set(), count: 0, firstLocationId: locId, documentId: loc.DocumentId });
       }
       const sub = issue.subgroups.get(docKey);
       sub.locationIds.add(locId);
@@ -316,7 +316,10 @@
             key: `${issue.keySymbol}:${issue.issueTagNumber}:${sub.firstLocationId}`,
             label: issueLabel,
             count: sub.count,
-            locationIds: Array.from(sub.locationIds)
+            locationIds: Array.from(sub.locationIds),
+            keySymbol: issue.keySymbol,
+            issueTagNumber: issue.issueTagNumber,
+            documentId: sub.documentId
           });
           continue;
         }
@@ -349,7 +352,10 @@
             key: `${issue.keySymbol}:${issue.issueTagNumber}:${sub.firstLocationId}`,
             label: `${issueLabel} | ${suffix}`,
             count: sub.count,
-            locationIds: Array.from(sub.locationIds)
+            locationIds: Array.from(sub.locationIds),
+            keySymbol: issue.keySymbol,
+            issueTagNumber: issue.issueTagNumber,
+            documentId: sub.documentId
           });
         }
       }
@@ -357,6 +363,39 @@
       result.push(...items.slice(0, maxPerPublication));
     }
     return result;
+  }
+
+  // ---------- aviso de confirmação quando já existem grifos na mesma publicação ----------
+  // Para cada grupo selecionado (identificado por KeySymbol + IssueTagNumber +
+  // DocumentId), verifica se o destino já tem QUALQUER UserMark numa Location
+  // com essa mesma combinação — não compara trechos (StartToken/EndToken) nem
+  // faz nenhuma checagem de "grifo parecido", só presença. Somente leitura:
+  // nenhuma linha é escrita no banco de destino.
+  function countPublicationsWithExistingHighlights(target, groups) {
+    let count = 0;
+    const matchedKeys = [];
+    for (const g of groups) {
+      const existing = queryOne(
+        target,
+        `SELECT UserMark.UserMarkId
+         FROM UserMark
+         JOIN Location ON Location.LocationId = UserMark.LocationId
+         WHERE Location.KeySymbol IS ? AND Location.IssueTagNumber IS ? AND Location.DocumentId IS ?
+         LIMIT 1`,
+        [g.keySymbol, g.issueTagNumber, g.documentId]
+      );
+      if (existing) {
+        count++;
+        matchedKeys.push(g.key);
+      }
+    }
+    return { count, matchedKeys };
+  }
+
+  // Mensagem de confirmação exibida antes do merge, quando count > 0.
+  function formatOverlapWarning(count) {
+    const plural = count === 1 ? '1 dessas publicações' : `${count} dessas publicações`;
+    return `Você já tem grifos em ${plural}. Isso não vai apagar nada — os grifos novos serão adicionados ao lado dos que você já tem. Deseja continuar?`;
   }
 
   // Mescla para o destino APENAS os grifos (UserMark) cujo LocationId esteja
@@ -430,6 +469,8 @@
     listHighlightGroups,
     formatIssueLabel,
     listFilteredPublicationGroups,
+    countPublicationsWithExistingHighlights,
+    formatOverlapWarning,
     mergeSelectedHighlights,
     loadDbFromZip
   };

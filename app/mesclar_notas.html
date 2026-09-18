@@ -77,6 +77,14 @@
     </div>
   </div>
 
+  <div class="confirm-box" id="overlapConfirm">
+    <p class="confirm-text" id="overlapConfirmText"></p>
+    <div class="confirm-actions">
+      <button type="button" id="overlapContinueBtn" class="confirm-continue">Continuar</button>
+      <button type="button" id="overlapBackBtn" class="confirm-back">Voltar e revisar seleção</button>
+    </div>
+  </div>
+
   <div class="result" id="result">
     <h2 id="resultTitle"></h2>
     <p class="tally" id="tally">
@@ -118,6 +126,17 @@ function selectedLocationIds(){
     ids.push(...JSON.parse(cb.dataset.locationIds));
   });
   return ids;
+}
+
+// Metadados (KeySymbol/IssueTagNumber/DocumentId) dos grupos marcados,
+// usados só para checar se o destino já tem grifos nessas publicações —
+// não interfere na lista de locationIds que o merge de fato usa.
+function selectedGroupsMeta(){
+  const groups = [];
+  document.querySelectorAll('#groupList input[type=checkbox]:checked').forEach(cb => {
+    groups.push(JSON.parse(cb.dataset.group));
+  });
+  return groups;
 }
 
 function updateButton(){
@@ -183,6 +202,12 @@ function renderGroupList(groups){
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.dataset.locationIds = JSON.stringify(g.locationIds);
+    cb.dataset.group = JSON.stringify({
+      key: g.key,
+      keySymbol: g.keySymbol,
+      issueTagNumber: g.issueTagNumber,
+      documentId: g.documentId
+    });
     cb.addEventListener('change', updateButton);
     const text = document.createElement('span');
     text.textContent = g.label;
@@ -226,6 +251,7 @@ function clearLog(){
   $('log').classList.remove('show');
   $('result').classList.remove('show');
   $('errorBox').classList.remove('show');
+  $('overlapConfirm').classList.remove('show');
 }
 
 // Erro com mensagem simples para o usuário e detalhe técnico só no console/expansível.
@@ -245,6 +271,27 @@ function showError(err){
   $('errorTechnical').textContent = err.message || String(err);
   $('errorBox').classList.add('show');
 }
+
+// Confirmação (Continuar / Voltar) exibida quando o destino já tem grifos em
+// alguma das publicações marcadas. Resolve para true (continuar) ou false
+// (voltar) sem tocar em nenhum dado — a checagem que decide se isso aparece
+// é só leitura, e nada é escrito no destino enquanto se espera a resposta.
+let pendingOverlapResolve = null;
+function askOverlapConfirmation(count){
+  return new Promise(resolve => {
+    pendingOverlapResolve = resolve;
+    $('overlapConfirmText').textContent = MergeCore.formatOverlapWarning(count);
+    $('overlapConfirm').classList.add('show');
+  });
+}
+$('overlapContinueBtn').addEventListener('click', () => {
+  $('overlapConfirm').classList.remove('show');
+  if (pendingOverlapResolve){ pendingOverlapResolve(true); pendingOverlapResolve = null; }
+});
+$('overlapBackBtn').addEventListener('click', () => {
+  $('overlapConfirm').classList.remove('show');
+  if (pendingOverlapResolve){ pendingOverlapResolve(false); pendingOverlapResolve = null; }
+});
 
 // ---------- fluxo principal (a lógica de merge em si vive em merge-core.js) ----------
 async function readFileAsUint8Array(file){
@@ -325,6 +372,20 @@ $('mergeBtn').addEventListener('click', async () => {
 
     if (mode === 'selected'){
       const locationIds = selectedLocationIds();
+
+      log('Verificando se você já tem grifos nessas publicações...');
+      const overlap = MergeCore.countPublicationsWithExistingHighlights(targetDb, selectedGroupsMeta());
+      if (overlap.count > 0){
+        const proceed = await askOverlapConfirmation(overlap.count);
+        if (!proceed){
+          log('Importação cancelada. Nada foi alterado — sua seleção continua marcada.', 'ok');
+          targetDb.close();
+          targetDb = null;
+          updateButton();
+          return;
+        }
+      }
+
       log('Copiando os grifos selecionados...');
       const report = MergeCore.mergeSelectedHighlights(targetDb, sourceDb, locationIds);
 

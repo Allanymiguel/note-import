@@ -424,3 +424,117 @@ test('listFilteredPublicationGroups: three+ DocumentIds with no Title and no Not
     assert.ok(!labels.some(l => l.includes(String(docId))), `DocumentId ${docId} não deve aparecer cru em nenhum rótulo`);
   }
 });
+
+test('countPublicationsWithExistingHighlights: no selected group overlaps the target -> count 0, merge proceeds normally', async () => {
+  const target = await createEmptyDb();
+  const source = await createEmptyDb();
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 1, Title: 'Artigo A' }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'src-um' }));
+
+  const groups = MergeCore.listFilteredPublicationGroups(source);
+  const overlap = MergeCore.countPublicationsWithExistingHighlights(target, groups);
+
+  assert.equal(overlap.count, 0);
+  assert.deepEqual(overlap.matchedKeys, []);
+
+  // Sem sobreposição, o merge deve rodar normalmente (mesmo comportamento de sempre).
+  const report = MergeCore.mergeSelectedHighlights(target, source, groups[0].locationIds);
+  assert.equal(report.userMarksAdded, 1);
+  assert.deepEqual(MergeCore.queryAll(target, 'PRAGMA foreign_key_check'), []);
+});
+
+test('countPublicationsWithExistingHighlights: one selected group overlaps -> singular warning, confirming still merges additively', async () => {
+  const target = await createEmptyDb();
+  const source = await createEmptyDb();
+
+  // Destino já tem um grifo nessa mesma publicação/edição/artigo.
+  insertRow(target, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 1, Title: 'Artigo A' }));
+  insertRow(target, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'existing-um' }));
+
+  // Origem tem um grifo DIFERENTE no mesmo artigo.
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 1, Title: 'Artigo A' }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'new-um' }));
+
+  const groups = MergeCore.listFilteredPublicationGroups(source);
+  const overlap = MergeCore.countPublicationsWithExistingHighlights(target, groups);
+
+  assert.equal(overlap.count, 1);
+  assert.equal(overlap.matchedKeys.length, 1);
+
+  const message = MergeCore.formatOverlapWarning(overlap.count);
+  assert.equal(
+    message,
+    'Você já tem grifos em 1 dessas publicações. Isso não vai apagar nada — os grifos novos serão adicionados ao lado dos que você já tem. Deseja continuar?'
+  );
+
+  // "Continuar": o merge é aditivo, o grifo antigo continua e o novo é somado.
+  const report = MergeCore.mergeSelectedHighlights(target, source, groups[0].locationIds);
+  assert.equal(report.userMarksAdded, 1);
+  assert.equal(report.userMarksReused, 0);
+  assert.equal(countRows(target, 'UserMark'), 2, 'o grifo que já existia não pode ser removido nem sobrescrito');
+  assert.ok(MergeCore.queryOne(target, "SELECT * FROM UserMark WHERE UserMarkGuid='existing-um'"), 'grifo antigo continua no destino');
+  assert.ok(MergeCore.queryOne(target, "SELECT * FROM UserMark WHERE UserMarkGuid='new-um'"), 'grifo novo foi adicionado');
+});
+
+test('countPublicationsWithExistingHighlights: multiple selected groups overlap -> plural warning with the correct count', async () => {
+  const target = await createEmptyDb();
+  const source = await createEmptyDb();
+
+  // Destino já tem grifos em duas das três publicações que serão selecionadas.
+  insertRow(target, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 1 }));
+  insertRow(target, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'existing-1' }));
+  insertRow(target, 'Location', locationDefaults({ LocationId: 2, KeySymbol: 'mwb', IssueTagNumber: 20260300, DocumentId: 2 }));
+  insertRow(target, 'UserMark', userMarkDefaults({ UserMarkId: 2, LocationId: 2, UserMarkGuid: 'existing-2' }));
+
+  // Três grupos na origem: dois coincidem com o destino, um é totalmente novo.
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 1 }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'src-1' }));
+  insertRow(source, 'Location', locationDefaults({ LocationId: 2, KeySymbol: 'mwb', IssueTagNumber: 20260300, DocumentId: 2 }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 2, LocationId: 2, UserMarkGuid: 'src-2' }));
+  insertRow(source, 'Location', locationDefaults({ LocationId: 3, KeySymbol: 'wcg', IssueTagNumber: 20250100, DocumentId: 3 }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 3, LocationId: 3, UserMarkGuid: 'src-3' }));
+
+  const groups = MergeCore.listFilteredPublicationGroups(source);
+  assert.equal(groups.length, 3);
+
+  const overlap = MergeCore.countPublicationsWithExistingHighlights(target, groups);
+  assert.equal(overlap.count, 2, 'a contagem deve bater com a quantidade real de coincidências');
+
+  const message = MergeCore.formatOverlapWarning(overlap.count);
+  assert.match(message, /em 2 dessas publicações/);
+});
+
+test('countPublicationsWithExistingHighlights: is read-only — never writes to the target, whether or not there is overlap', async () => {
+  const target = await createEmptyDb();
+  const source = await createEmptyDb();
+
+  insertRow(target, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 1 }));
+  insertRow(target, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'existing-um' }));
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 1 }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'new-um' }));
+
+  const groups = MergeCore.listFilteredPublicationGroups(source);
+
+  const before = {
+    Location: countRows(target, 'Location'),
+    UserMark: countRows(target, 'UserMark'),
+    BlockRange: countRows(target, 'BlockRange'),
+    Note: countRows(target, 'Note')
+  };
+
+  const overlap = MergeCore.countPublicationsWithExistingHighlights(target, groups);
+  assert.equal(overlap.count, 1, 'sanity check: a checagem realmente encontrou a sobreposição');
+
+  assert.deepEqual(
+    {
+      Location: countRows(target, 'Location'),
+      UserMark: countRows(target, 'UserMark'),
+      BlockRange: countRows(target, 'BlockRange'),
+      Note: countRows(target, 'Note')
+    },
+    before,
+    '"Voltar e revisar seleção" depende disto: a checagem de sobreposição não pode escrever nada no destino'
+  );
+});

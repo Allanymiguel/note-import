@@ -228,6 +228,48 @@ button#mergeBtn:disabled{opacity:0.4; cursor:not-allowed;}
   word-break:break-word;
 }
 
+.confirm-box{
+  margin-top:32px;
+  padding:20px 22px;
+  border:1px solid var(--gold-dim);
+  border-radius:4px;
+  background:rgba(201,162,39,0.06);
+  display:none;
+}
+.confirm-box.show{display:block;}
+.confirm-text{
+  margin:0 0 16px;
+  font-size:0.95rem;
+  line-height:1.6;
+  color:var(--paper);
+}
+.confirm-actions{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.confirm-actions button{
+  font-family:'Inter',sans-serif;
+  font-weight:600;
+  font-size:0.9rem;
+  border-radius:2px;
+  padding:11px 20px;
+  cursor:pointer;
+  transition:background .15s ease, opacity .15s ease;
+}
+.confirm-continue{
+  background:var(--gold);
+  color:#1a1406;
+  border:none;
+}
+.confirm-continue:hover{background:#ddb43a;}
+.confirm-back{
+  background:transparent;
+  color:var(--paper);
+  border:1px solid var(--line);
+}
+.confirm-back:hover{border-color:var(--gold-dim); color:var(--gold);}
+
 .result{
   margin-top:22px;
   padding-top:22px;
