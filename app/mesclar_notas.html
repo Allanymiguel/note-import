@@ -192,6 +192,20 @@
     margin:0 0 14px;
     color:var(--paper);
   }
+  .tally{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin:0 0 18px;
+    padding:14px 16px;
+    border:1px solid var(--ok);
+    border-radius:4px;
+    background:rgba(143,174,122,0.08);
+    font-size:0.92rem;
+    color:var(--paper);
+  }
+  .tally-icon{font-size:1.2rem; flex-shrink:0;}
+  .tally strong{color:var(--ok);}
   ul.notes-added{margin:0 0 20px; padding-left:20px;}
   ul.notes-added li{margin-bottom:8px; font-size:0.92rem; color:var(--paper);}
   ul.notes-added li .content{color:var(--paper-dim); display:block; font-size:0.85rem;}
@@ -273,6 +287,10 @@
 
   <div class="result" id="result">
     <h2 id="resultTitle"></h2>
+    <p class="tally" id="tally">
+      <span class="tally-icon">✅</span>
+      <span id="tallyText"></span>
+    </p>
     <ul class="notes-added" id="notesAdded"></ul>
     <a class="download-btn" id="downloadLink" download>Baixar arquivo mesclado</a>
   </div>
@@ -426,6 +444,7 @@ function findOrCreateTag(target, source, sourceTagId, cache){
 
 function mergeNotes(target, source){
   const existingGuids = new Set(queryAll(target, 'SELECT Guid FROM Note').map(r => r.Guid));
+  const beforeCount = existingGuids.size;
   const sourceNotes = queryAll(source, 'SELECT * FROM Note');
 
   const locationCache = new Map(), userMarkCache = new Map(), tagCache = new Map();
@@ -454,7 +473,7 @@ function mergeNotes(target, source){
     added.push({ guid: note.Guid, title: note.Title, content: note.Content });
   }
 
-  return { added, skipped };
+  return { added, skipped, beforeCount };
 }
 
 // ---------- fluxo principal ----------
@@ -539,6 +558,11 @@ $('mergeBtn').addEventListener('click', async () => {
     $('resultTitle').textContent = report.added.length > 0
       ? `${report.added.length} nota(s) importada(s):`
       : 'Nenhuma nota nova encontrada';
+
+    const totalAfter = report.beforeCount + report.added.length;
+    $('tallyText').textContent =
+      `Você já tinha ${report.beforeCount} nota(s) + ${report.added.length} nova(s) = ${totalAfter} nota(s) no total. Nada foi removido ou sobrescrito.`;
+
     const ul = $('notesAdded');
     ul.innerHTML = '';
     for (const n of report.added){
