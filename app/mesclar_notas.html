@@ -146,6 +146,38 @@
   #log .line.err{color:var(--error);}
   #log .line.ok{color:var(--ok);}
 
+  .error-box{
+    margin-top:32px;
+    padding:20px 22px;
+    border:1px solid var(--error);
+    border-radius:4px;
+    background:rgba(217,122,108,0.08);
+    display:none;
+  }
+  .error-box.show{display:flex; gap:14px; align-items:flex-start;}
+  .error-icon{font-size:1.4rem; line-height:1; flex-shrink:0;}
+  .error-text{
+    font-size:0.95rem;
+    line-height:1.6;
+    color:var(--paper);
+  }
+  .error-details{margin-top:10px;}
+  .error-details summary{
+    font-size:0.8rem;
+    color:var(--paper-dim);
+    cursor:pointer;
+  }
+  .error-details pre{
+    margin:8px 0 0;
+    padding:10px 12px;
+    background:rgba(0,0,0,0.2);
+    border-radius:2px;
+    font-size:0.76rem;
+    color:var(--paper-dim);
+    white-space:pre-wrap;
+    word-break:break-word;
+  }
+
   .result{
     margin-top:22px;
     padding-top:22px;
@@ -203,7 +235,7 @@
     <li>Clicar em "Fazer backup" na página de notas do seu JW Library.</li>
     <li>Baixar arquivo de quem compartilhou as notas.</li>
     <li>Selecionar os dois arquivos <em>.jwlibrary</em> que foram gerados, nos botões abaixo.</li>
-    <li>Abrir o arquivo <em>RESULTADO.jwlibrary</em> gerado aqui, dentro do seu JW Library.</li>
+    <li>Abrir o arquivo <em>{RESULTADO}.jwlibrary</em> gerado aqui, dentro do seu JW Library.</li>
   </ol>
 
   <div class="import-grid">
@@ -227,6 +259,17 @@
   <button id="mergeBtn" disabled>Mesclar notas</button>
 
   <div id="log"></div>
+
+  <div class="error-box" id="errorBox">
+    <span class="error-icon">⚠️</span>
+    <div>
+      <div class="error-text" id="errorText"></div>
+      <details class="error-details">
+        <summary>Detalhes técnicos</summary>
+        <pre id="errorTechnical"></pre>
+      </details>
+    </div>
+  </div>
 
   <div class="result" id="result">
     <h2 id="resultTitle"></h2>
@@ -280,6 +323,25 @@ function clearLog(){
   $('log').innerHTML = '';
   $('log').classList.remove('show');
   $('result').classList.remove('show');
+  $('errorBox').classList.remove('show');
+}
+
+// Erro com mensagem simples para o usuário e detalhe técnico só no console/expansível.
+class FriendlyError extends Error {
+  constructor(friendlyMessage, technicalMessage){
+    super(technicalMessage || friendlyMessage);
+    this.friendlyMessage = friendlyMessage;
+  }
+}
+
+function showError(err){
+  console.error(err);
+  const friendly = err instanceof FriendlyError
+    ? err.friendlyMessage
+    : 'Algo deu errado ao processar os arquivos. Confira se escolheu os arquivos .jwlibrary certos e tente de novo.';
+  $('errorText').textContent = friendly;
+  $('errorTechnical').textContent = err.message || String(err);
+  $('errorBox').classList.add('show');
 }
 
 // ---------- helpers de SQL sobre sql.js ----------
@@ -402,16 +464,30 @@ async function readFileAsUint8Array(file){
 }
 
 async function loadDbFromZip(bytes, label){
-  const zip = await JSZip.loadAsync(bytes);
+  let zip;
+  try{
+    zip = await JSZip.loadAsync(bytes);
+  } catch(err){
+    throw new FriendlyError(
+      `O arquivo (${label}) não parece ser um backup do JW Library. Verifique se escolheu o arquivo .jwlibrary certo.`,
+      `Failed to unzip ${label}: ${err.message}`
+    );
+  }
   const dbEntry = zip.file('userData.db');
   if (!dbEntry){
-    throw new Error(`Não encontrei "userData.db" dentro de ${label}. Confirme que é um backup .jwlibrary válido (e não um .zip renomeado errado).`);
+    throw new FriendlyError(
+      `O arquivo (${label}) não parece ser um backup do JW Library. Verifique se escolheu o arquivo .jwlibrary certo.`,
+      `Não encontrei "userData.db" dentro de ${label}. Confirme que é um backup .jwlibrary válido (e não um .zip renomeado errado).`
+    );
   }
   const dbBytes = await dbEntry.async('uint8array');
   const db = new SQL.Database(dbBytes);
   const hasNoteTable = queryOne(db, "SELECT name FROM sqlite_master WHERE type='table' AND name='Note'");
   if (!hasNoteTable){
-    throw new Error(`O arquivo ${label} não parece ter a estrutura esperada do JW Library.`);
+    throw new FriendlyError(
+      `O arquivo (${label}) não parece ser um backup do JW Library. Verifique se escolheu o arquivo .jwlibrary certo.`,
+      `O arquivo ${label} não parece ter a estrutura esperada do JW Library.`
+    );
   }
   return { db, zip };
 }
@@ -437,10 +513,13 @@ $('mergeBtn').addEventListener('click', async () => {
     log('Comparando notas...');
     const report = mergeNotes(targetDb, sourceDb);
 
-    log('Verificando integridade dos dados...');
+    log('Verificando se está tudo certo...');
     const problems = queryAll(targetDb, 'PRAGMA foreign_key_check');
     if (problems.length > 0){
-      throw new Error('Inconsistência detectada nos dados, o processo foi cancelado por segurança. Nenhum arquivo foi alterado.');
+      throw new FriendlyError(
+        'Encontramos algo estranho nos dados e paramos por segurança. Nenhum arquivo seu foi alterado — pode tentar de novo.',
+        `Inconsistência detectada via foreign_key_check: ${JSON.stringify(problems)}`
+      );
     }
 
     log(`${report.added.length} nota(s) nova(s), ${report.skipped.length} já existiam e foram ignoradas.`, 'ok');
@@ -478,8 +557,7 @@ $('mergeBtn').addEventListener('click', async () => {
     targetDb.close();
     sourceDb.close();
   } catch(err){
-    console.error(err);
-    log('Erro: ' + err.message, 'err');
+    showError(err);
   } finally {
     $('mergeBtn').disabled = false;
   }
