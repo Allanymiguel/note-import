@@ -6,7 +6,7 @@ Tudo roda **inteiramente no navegador**. Os dois `.jwlibrary` selecionados são 
 
 ## Como usar
 
-1. Abra [`app/index.html`](app/index.html) no navegador (funciona direto via `file://`, sem precisar de servidor).
+1. Acesse **[note-import.aallanymiguel.workers.dev](https://note-import.aallanymiguel.workers.dev)** — não precisa instalar nada, funciona em qualquer navegador (celular ou computador).
 2. Faça backup do seu JW Library e do dispositivo de quem vai te enviar as notas (`.jwlibrary`).
 3. Selecione os dois arquivos na página: o seu (destinatário) e o recebido (remetente).
 4. Escolha o que importar:
