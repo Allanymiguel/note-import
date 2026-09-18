@@ -92,7 +92,7 @@
       <span id="tallyText"></span>
     </p>
     <ul class="notes-added" id="notesAdded"></ul>
-    <a class="download-btn" id="downloadLink" download>Baixar arquivo mesclado</a>
+    <a class="download-btn" id="downloadLink" download><span class="download-icon" aria-hidden="true">⬇️</span><span id="downloadLinkText">Baixar arquivo mesclado</span></a>
   </div>
 
   <footer>
@@ -105,6 +105,7 @@ let mineFile = null, sharedFile = null;
 let SQL = null;
 let mode = null; // só passa a valer 'all'/'notes'/'selected' quando a pessoa escolhe explicitamente
 let sourceCache = null; // { file, db, zip } — evita reler o arquivo recebido toda hora
+let awaitingSelectionChange = false; // true logo após um "Importar selecionados" bem-sucedido: só volta a liberar o botão quando a pessoa marcar/desmarcar algo de novo
 
 const $ = (id) => document.getElementById(id);
 
@@ -142,6 +143,10 @@ function selectedGroupsMeta(){
 function updateButton(){
   const filesChosen = !!(mineFile && sharedFile);
   if (!mode){
+    $('mergeBtn').disabled = true;
+    return;
+  }
+  if (mode === 'selected' && awaitingSelectionChange){
     $('mergeBtn').disabled = true;
     return;
   }
@@ -208,7 +213,10 @@ function renderGroupList(groups){
       issueTagNumber: g.issueTagNumber,
       documentId: g.documentId
     });
-    cb.addEventListener('change', updateButton);
+    cb.addEventListener('change', () => {
+      awaitingSelectionChange = false;
+      updateButton();
+    });
     const text = document.createElement('span');
     text.textContent = g.label;
     label.appendChild(cb);
@@ -425,12 +433,16 @@ $('mergeBtn').addEventListener('click', async () => {
     const dl = $('downloadLink');
     dl.href = url;
     dl.download = outName;
-    dl.textContent = 'Baixar ' + outName;
+    $('downloadLinkText').textContent = 'Baixar ' + outName;
 
     $('resultTitle').textContent = resultTitleText;
     $('tallyText').textContent = tallyText;
     renderNotesList(notesForList);
     $('result').classList.add('show');
+
+    if (mode === 'selected'){
+      awaitingSelectionChange = true;
+    }
 
     targetDb.close();
     targetDb = null;

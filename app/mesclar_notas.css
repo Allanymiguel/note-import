@@ -302,7 +302,9 @@ ul.notes-added{margin:0 0 20px; padding-left:20px;}
 ul.notes-added li{margin-bottom:8px; font-size:0.92rem; color:var(--paper);}
 ul.notes-added li .content{color:var(--paper-dim); display:block; font-size:0.85rem;}
 a.download-btn{
-  display:inline-block;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
   font-family:'Inter',sans-serif;
   font-weight:600;
   font-size:0.95rem;
@@ -315,6 +317,7 @@ a.download-btn{
   transition:background .15s ease;
 }
 a.download-btn:hover{background:rgba(201,162,39,0.1);}
+.download-icon{font-size:1rem; line-height:1;}
 
 footer{
   margin-top:56px;
