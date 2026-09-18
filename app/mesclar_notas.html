@@ -448,7 +448,7 @@ $('mergeBtn').addEventListener('click', async () => {
 
     const newDbBytes = targetDb.export();
     mineZip.file('userData.db', newDbBytes);
-    const blob = await mineZip.generateAsync({ type: 'blob' });
+    const blob = await mineZip.generateAsync({ type: 'blob', mimeType: 'application/octet-stream' });
 
     const url = URL.createObjectURL(blob);
     const outName = mineFile.name.replace(/\.jwlibrary$/i, '') + '_mesclado.jwlibrary';
