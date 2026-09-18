@@ -273,11 +273,12 @@ test('formatIssueLabel: IssueTagNumber 0 (livro/brochura sem edição real) omit
   assert.doesNotMatch(MergeCore.formatIssueLabel('wcg', 0), /mês/);
 });
 
-test('listFilteredPublicationGroups: IssueTagNumber 0 não gera "mês 0/0" e ainda diferencia os capítulos por subgrupo', async () => {
+test('listFilteredPublicationGroups: IssueTagNumber 0 não gera "mês 0/0"; sem nenhum DocumentId identificável, não desdobra', async () => {
   const source = await createEmptyDb();
 
-  // wcg é um livro, não uma revista periódica: IssueTagNumber vem 0 (não null),
-  // mas os capítulos ainda são distinguíveis pelo DocumentId.
+  // wcg é um livro, não uma revista periódica: IssueTagNumber vem 0 (não null).
+  // Nenhum dos dois DocumentId tem Title ou Note, então não há como
+  // diferenciá-los — devem aparecer como um item só, com a contagem somada.
   insertRow(source, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'wcg', IssueTagNumber: 0, DocumentId: 111, Title: null }));
   insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'g1' }));
 
@@ -287,14 +288,12 @@ test('listFilteredPublicationGroups: IssueTagNumber 0 não gera "mês 0/0" e ain
   const groups = MergeCore.listFilteredPublicationGroups(source);
   const labels = groups.map(g => g.label);
 
-  assert.equal(groups.length, 2);
+  assert.equal(groups.length, 1);
   for (const label of labels) {
     assert.doesNotMatch(label, /mês\s*0\/0/, 'não deve exibir "mês 0/0" para publicações sem edição real');
   }
-  assert.deepEqual(labels.sort(), [
-    'Ande Corajosamente com Deus | Artigo sem título (A)',
-    'Ande Corajosamente com Deus | Artigo sem título (B)'
-  ]);
+  assert.deepEqual(labels, ['Ande Corajosamente com Deus']);
+  assert.equal(groups[0].count, 2, 'a contagem deve somar os dois DocumentId não identificáveis');
 });
 
 test('listFilteredPublicationGroups: only lists mwb/w/wcg, excludes other KeySymbols', async () => {
@@ -359,7 +358,7 @@ test('listFilteredPublicationGroups: single DocumentId in the issue keeps the pl
   assert.equal(groups[0].label, 'A Sentinela - julho/2026', 'com um único DocumentId, nenhum sufixo de artigo deve ser adicionado');
 });
 
-test('listFilteredPublicationGroups: two DocumentIds, one with Title and one with nothing, resolve to (a) and (c)', async () => {
+test('listFilteredPublicationGroups: one identifiable DocumentId and two non-identifiable -> separate item + one combined "Outros"', async () => {
   const source = await createEmptyDb();
 
   insertRow(source, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 111111, Title: 'Find Comfort in the Book of Isaiah' }));
@@ -368,15 +367,25 @@ test('listFilteredPublicationGroups: two DocumentIds, one with Title and one wit
   insertRow(source, 'Location', locationDefaults({ LocationId: 2, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 222222, Title: null }));
   insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 2, LocationId: 2, UserMarkGuid: 'g2' }));
 
+  insertRow(source, 'Location', locationDefaults({ LocationId: 3, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 333333, Title: null }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 3, LocationId: 3, UserMarkGuid: 'g3' }));
+
   const groups = MergeCore.listFilteredPublicationGroups(source);
   const labels = groups.map(g => g.label);
 
-  assert.equal(groups.length, 2);
+  assert.equal(groups.length, 2, 'um item para o artigo identificável, um item combinado para os dois não identificáveis');
   assert.ok(labels.includes('A Sentinela - julho/2026 | Find Comfort in the Book of Isaiah'));
-  assert.ok(labels.includes('A Sentinela - julho/2026 | Artigo sem título'));
+  assert.ok(labels.includes('A Sentinela - julho/2026 | Outros grifos dessa edição'));
+  assert.ok(!labels.some(l => /\(A\)|\(B\)|\(C\)/.test(l)), 'o padrão de letras não deve mais existir');
+
+  const othersGroup = groups.find(g => g.label.endsWith('Outros grifos dessa edição'));
+  assert.equal(othersGroup.count, 2, 'a contagem do item "Outros" deve somar os dois DocumentId não identificáveis');
 
   for (const label of labels) {
-    assert.ok(!label.includes('111111') && !label.includes('222222'), 'o DocumentId cru nunca deve aparecer no rótulo');
+    assert.ok(
+      !label.includes('111111') && !label.includes('222222') && !label.includes('333333'),
+      'o DocumentId cru nunca deve aparecer no rótulo'
+    );
   }
 });
 
@@ -400,7 +409,7 @@ test('listFilteredPublicationGroups: DocumentId without Title but with a Note us
   assert.ok(!noteLabel.includes('444444'));
 });
 
-test('listFilteredPublicationGroups: three+ DocumentIds with no Title and no Note get sequential letters (A, B, C)', async () => {
+test('listFilteredPublicationGroups: three+ DocumentIds with no Title and no Note collapse into a single summed item (no letters)', async () => {
   const source = await createEmptyDb();
 
   const docIds = [555001, 555002, 555003];
@@ -412,17 +421,33 @@ test('listFilteredPublicationGroups: three+ DocumentIds with no Title and no Not
   }
 
   const groups = MergeCore.listFilteredPublicationGroups(source);
-  const labels = groups.map(g => g.label).sort();
+  const labels = groups.map(g => g.label);
 
-  assert.deepEqual(labels, [
-    'A Sentinela - julho/2026 | Artigo sem título (A)',
-    'A Sentinela - julho/2026 | Artigo sem título (B)',
-    'A Sentinela - julho/2026 | Artigo sem título (C)'
-  ]);
+  assert.equal(groups.length, 1, 'sem nenhum DocumentId identificável, a edição inteira vira um item só');
+  assert.deepEqual(labels, ['A Sentinela - julho/2026']);
+  assert.equal(groups[0].count, 3, 'a contagem deve somar os três DocumentId');
 
   for (const docId of docIds) {
     assert.ok(!labels.some(l => l.includes(String(docId))), `DocumentId ${docId} não deve aparecer cru em nenhum rótulo`);
   }
+});
+
+test('listFilteredPublicationGroups: when every DocumentId is identifiable, each gets its own item and there is no "Outros" item', async () => {
+  const source = await createEmptyDb();
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 1, Title: 'Artigo A' }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'g1' }));
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 2, KeySymbol: 'w', IssueTagNumber: 20260700, DocumentId: 2, Title: 'Artigo B' }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 2, LocationId: 2, UserMarkGuid: 'g2' }));
+
+  const groups = MergeCore.listFilteredPublicationGroups(source);
+  const labels = groups.map(g => g.label);
+
+  assert.equal(groups.length, 2);
+  assert.ok(labels.includes('A Sentinela - julho/2026 | Artigo A'));
+  assert.ok(labels.includes('A Sentinela - julho/2026 | Artigo B'));
+  assert.ok(!labels.some(l => l.includes('Outros grifos dessa edição')), 'não sobra nenhum não identificável, então não deve haver item "Outros"');
 });
 
 test('countPublicationsWithExistingHighlights: no selected group overlaps the target -> count 0, merge proceeds normally', async () => {

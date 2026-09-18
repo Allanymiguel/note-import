@@ -319,34 +319,47 @@
             locationIds: Array.from(sub.locationIds),
             keySymbol: issue.keySymbol,
             issueTagNumber: issue.issueTagNumber,
-            documentId: sub.documentId
+            documentIds: [sub.documentId]
           });
           continue;
         }
 
-        // Mais de um artigo na mesma edição: cada um precisa de uma pista
-        // de identificação própria, sem nunca expor o DocumentId cru.
+        // Mais de um artigo na mesma edição: só vale a pena desdobrar em
+        // itens separados quando existir alguma pista real (Title ou Note)
+        // para diferenciá-los — um rótulo genérico por DocumentId não ajuda
+        // em nada e só polui a lista.
         const resolved = subgroups.map(sub => resolveArticleSuffix(source, sub));
-        const genericIndexes = resolved
-          .map((r, i) => (r.kind === 'generic' ? i : -1))
+        const identifiableIndexes = resolved
+          .map((r, i) => (r.kind !== 'generic' ? i : -1))
           .filter(i => i !== -1);
 
-        for (let i = 0; i < subgroups.length; i++) {
+        if (identifiableIndexes.length === 0) {
+          // Nenhum artigo identificável: mostra a edição inteira como um item só.
+          const locationIds = [];
+          const documentIds = [];
+          let totalCount = 0;
+          for (const sub of subgroups) {
+            locationIds.push(...sub.locationIds);
+            documentIds.push(sub.documentId);
+            totalCount += sub.count;
+          }
+          items.push({
+            key: `${issue.keySymbol}:${issue.issueTagNumber}`,
+            label: issueLabel,
+            count: totalCount,
+            locationIds,
+            keySymbol: issue.keySymbol,
+            issueTagNumber: issue.issueTagNumber,
+            documentIds
+          });
+          continue;
+        }
+
+        for (const i of identifiableIndexes) {
           if (items.length >= maxPerPublication) break;
           const sub = subgroups[i];
           const r = resolved[i];
-
-          let suffix;
-          if (r.kind === 'title') {
-            suffix = r.text;
-          } else if (r.kind === 'note') {
-            suffix = `Nota: "${r.text}"`;
-          } else {
-            const letterIndex = genericIndexes.indexOf(i);
-            suffix = genericIndexes.length > 1
-              ? `Artigo sem título (${String.fromCharCode(65 + letterIndex)})`
-              : 'Artigo sem título';
-          }
+          const suffix = r.kind === 'title' ? r.text : `Nota: "${r.text}"`;
 
           items.push({
             key: `${issue.keySymbol}:${issue.issueTagNumber}:${sub.firstLocationId}`,
@@ -355,7 +368,28 @@
             locationIds: Array.from(sub.locationIds),
             keySymbol: issue.keySymbol,
             issueTagNumber: issue.issueTagNumber,
-            documentId: sub.documentId
+            documentIds: [sub.documentId]
+          });
+        }
+
+        const nonIdentifiable = subgroups.filter((_, i) => resolved[i].kind === 'generic');
+        if (nonIdentifiable.length > 0 && items.length < maxPerPublication) {
+          const locationIds = [];
+          const documentIds = [];
+          let totalCount = 0;
+          for (const sub of nonIdentifiable) {
+            locationIds.push(...sub.locationIds);
+            documentIds.push(sub.documentId);
+            totalCount += sub.count;
+          }
+          items.push({
+            key: `${issue.keySymbol}:${issue.issueTagNumber}:others`,
+            label: `${issueLabel} | Outros grifos dessa edição`,
+            count: totalCount,
+            locationIds,
+            keySymbol: issue.keySymbol,
+            issueTagNumber: issue.issueTagNumber,
+            documentIds
           });
         }
       }
@@ -375,16 +409,17 @@
     let count = 0;
     const matchedKeys = [];
     for (const g of groups) {
-      const existing = queryOne(
+      const documentIds = g.documentIds && g.documentIds.length ? g.documentIds : [g.documentId];
+      const hasExisting = documentIds.some(documentId => queryOne(
         target,
         `SELECT UserMark.UserMarkId
          FROM UserMark
          JOIN Location ON Location.LocationId = UserMark.LocationId
          WHERE Location.KeySymbol IS ? AND Location.IssueTagNumber IS ? AND Location.DocumentId IS ?
          LIMIT 1`,
-        [g.keySymbol, g.issueTagNumber, g.documentId]
-      );
-      if (existing) {
+        [g.keySymbol, g.issueTagNumber, documentId]
+      ));
+      if (hasExisting) {
         count++;
         matchedKeys.push(g.key);
       }

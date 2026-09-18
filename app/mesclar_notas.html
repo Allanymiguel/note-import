@@ -211,7 +211,7 @@ function renderGroupList(groups){
       key: g.key,
       keySymbol: g.keySymbol,
       issueTagNumber: g.issueTagNumber,
-      documentId: g.documentId
+      documentIds: g.documentIds
     });
     cb.addEventListener('change', () => {
       awaitingSelectionChange = false;
