@@ -196,6 +196,7 @@
     const year = Math.floor(issueTagNumber / 10000);
     const month = Math.floor(issueTagNumber / 100) % 100;
     const monthName = MONTH_NAMES_PT[month - 1] || `mês ${month}`;
+    if(issueTagNumber === 0) return `${friendly}`;
     return `${friendly} - ${monthName}/${year}`;
   }
 
