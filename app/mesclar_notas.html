@@ -44,7 +44,7 @@
 
   <div class="import-mode">
     <label>
-      <input type="radio" name="importMode" value="all" id="modeAll" checked>
+      <input type="radio" name="importMode" value="all" id="modeAll">
       <span>Importar tudo<span class="mode-hint">Mescla suas notas e quaisquer marcações de texto com as do arquivo remetente</span></span>
     </label>
     <label>
@@ -95,7 +95,7 @@
 <script>
 let mineFile = null, sharedFile = null;
 let SQL = null;
-let mode = 'all';
+let mode = null; // só passa a valer 'all'/'notes'/'selected' quando a pessoa escolhe explicitamente
 let sourceCache = null; // { file, db, zip } — evita reler o arquivo recebido toda hora
 
 const $ = (id) => document.getElementById(id);
@@ -122,6 +122,10 @@ function selectedLocationIds(){
 
 function updateButton(){
   const filesChosen = !!(mineFile && sharedFile);
+  if (!mode){
+    $('mergeBtn').disabled = true;
+    return;
+  }
   $('mergeBtn').disabled = mode === 'selected'
     ? !(filesChosen && selectedLocationIds().length > 0)
     : !filesChosen;
