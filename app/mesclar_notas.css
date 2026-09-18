@@ -46,6 +46,16 @@ p.lede{
   font-family:'Lora',serif;
 }
 .steps strong{color:var(--paper); font-weight:600;}
+.restore-note{
+  margin:0 0 32px;
+  padding:14px 16px;
+  border:1px solid var(--line);
+  border-radius:4px;
+  color:var(--paper-dim);
+  font-size:0.85rem;
+  line-height:1.7;
+}
+.restore-note em{color:var(--paper); font-style:normal;}
 .import-grid{
   display:grid;
   grid-template-columns:1fr 1fr;
