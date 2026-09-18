@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+<script src="merge-core.js"></script>
 <style>
   :root{
     --ink:      #12182b;
@@ -115,6 +116,68 @@
     color:var(--paper-dim);
     margin-top:4px;
   }
+  .import-mode{
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    margin-bottom:18px;
+  }
+  .import-mode label{
+    display:flex;
+    align-items:flex-start;
+    gap:10px;
+    font-size:0.92rem;
+    color:var(--paper);
+    cursor:pointer;
+  }
+  .import-mode input[type=radio]{margin-top:3px; accent-color:var(--gold);}
+  .import-mode .mode-hint{display:block; font-size:0.78rem; color:var(--paper-dim);}
+
+  .group-picker{
+    display:none;
+    margin-bottom:18px;
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:16px 18px;
+  }
+  .group-picker.show{display:block;}
+  .group-picker .picker-hint{
+    font-size:0.82rem;
+    color:var(--paper-dim);
+    margin:0 0 12px;
+  }
+  .group-list{
+    max-height:260px;
+    overflow-y:auto;
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+  }
+  .group-item{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    padding:9px 6px;
+    border-bottom:1px solid rgba(42,51,80,0.5);
+    font-size:0.9rem;
+  }
+  .group-item:last-child{border-bottom:none;}
+  .group-item label{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    cursor:pointer;
+    flex:1;
+    color:var(--paper);
+  }
+  .group-item input[type=checkbox]{accent-color:var(--gold);}
+  .group-item .count{
+    font-size:0.78rem;
+    color:var(--paper-dim);
+    white-space:nowrap;
+  }
+
   button#mergeBtn{
     font-family:'Inter',sans-serif;
     font-weight:600;
@@ -270,6 +333,22 @@
     </label>
   </div>
 
+  <div class="import-mode">
+    <label>
+      <input type="radio" name="importMode" value="all" id="modeAll" checked>
+      <span>Importar tudo (recomendado)<span class="mode-hint">Mescla todas as notas e grifos do arquivo recebido</span></span>
+    </label>
+    <label>
+      <input type="radio" name="importMode" value="selected" id="modeSelected">
+      <span>Importar só os grifos de um artigo específico<span class="mode-hint">Escolha exatamente o que copiar do arquivo recebido</span></span>
+    </label>
+  </div>
+
+  <div class="group-picker" id="groupPicker">
+    <p class="picker-hint" id="groupPickerHint">Selecione os dois arquivos acima para ver a lista de artigos.</p>
+    <div class="group-list" id="groupList"></div>
+  </div>
+
   <button id="mergeBtn" disabled>Mesclar notas</button>
 
   <div id="log"></div>
@@ -303,6 +382,8 @@
 <script>
 let mineFile = null, sharedFile = null;
 let SQL = null;
+let mode = 'all';
+let sourceCache = null; // { file, db, zip } — evita reler o arquivo recebido toda hora
 
 const $ = (id) => document.getElementById(id);
 
@@ -313,19 +394,103 @@ function setFileName(el, file){
 $('nameMine').dataset.placeholder = $('nameMine').textContent;
 $('nameShared').dataset.placeholder = $('nameShared').textContent;
 
+function resetSourceCache(){
+  if (sourceCache && sourceCache.db){ try{ sourceCache.db.close(); }catch(e){} }
+  sourceCache = null;
+}
+
+function selectedLocationIds(){
+  const ids = [];
+  document.querySelectorAll('#groupList input[type=checkbox]:checked').forEach(cb => {
+    ids.push(...JSON.parse(cb.dataset.locationIds));
+  });
+  return ids;
+}
+
+function updateButton(){
+  const filesChosen = !!(mineFile && sharedFile);
+  $('mergeBtn').disabled = mode === 'selected'
+    ? !(filesChosen && selectedLocationIds().length > 0)
+    : !filesChosen;
+}
+
 $('fileMine').addEventListener('change', e => {
   mineFile = e.target.files[0] || null;
   setFileName($('nameMine'), mineFile);
+  if (mode === 'selected' && mineFile && sharedFile) loadGroupsIntoPicker();
   updateButton();
 });
 $('fileShared').addEventListener('change', e => {
   sharedFile = e.target.files[0] || null;
   setFileName($('nameShared'), sharedFile);
+  resetSourceCache();
+  if (mode === 'selected'){
+    if (mineFile && sharedFile) loadGroupsIntoPicker();
+    else {
+      $('groupList').innerHTML = '';
+      $('groupPickerHint').textContent = 'Selecione os dois arquivos acima para ver a lista de artigos.';
+    }
+  }
   updateButton();
 });
 
-function updateButton(){
-  $('mergeBtn').disabled = !(mineFile && sharedFile);
+document.querySelectorAll('input[name=importMode]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    mode = document.querySelector('input[name=importMode]:checked').value;
+    $('mergeBtn').textContent = mode === 'selected' ? 'Importar selecionados' : 'Mesclar notas';
+    if (mode === 'selected'){
+      $('groupPicker').classList.add('show');
+      if (mineFile && sharedFile) loadGroupsIntoPicker();
+    } else {
+      $('groupPicker').classList.remove('show');
+    }
+    updateButton();
+  });
+});
+
+function renderGroupList(groups){
+  const list = $('groupList');
+  list.innerHTML = '';
+  if (groups.length === 0){
+    $('groupPickerHint').textContent = 'Esse arquivo não tem nenhum grifo para importar.';
+    return;
+  }
+  $('groupPickerHint').textContent = 'Marque de onde você quer copiar os grifos:';
+  for (const g of groups){
+    const item = document.createElement('div');
+    item.className = 'group-item';
+
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.dataset.locationIds = JSON.stringify(g.locationIds);
+    cb.addEventListener('change', updateButton);
+    const text = document.createElement('span');
+    text.textContent = g.label;
+    label.appendChild(cb);
+    label.appendChild(text);
+
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = `${g.count} grifo(s)`;
+
+    item.appendChild(label);
+    item.appendChild(count);
+    list.appendChild(item);
+  }
+}
+
+async function loadGroupsIntoPicker(){
+  $('groupPickerHint').textContent = 'Carregando lista de artigos...';
+  $('groupList').innerHTML = '';
+  try{
+    const { db } = await ensureSourceLoaded();
+    renderGroupList(MergeCore.listHighlightGroups(db));
+  } catch(err){
+    showError(err);
+    $('groupPickerHint').textContent = 'Não foi possível carregar a lista.';
+  }
+  updateButton();
 }
 
 function log(msg, cls){
@@ -362,153 +527,64 @@ function showError(err){
   $('errorBox').classList.add('show');
 }
 
-// ---------- helpers de SQL sobre sql.js ----------
-function queryAll(db, sql, params = []){
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  const rows = [];
-  while (stmt.step()) rows.push(stmt.getAsObject());
-  stmt.free();
-  return rows;
-}
-function queryOne(db, sql, params = []){
-  const rows = queryAll(db, sql, params);
-  return rows.length ? rows[0] : null;
-}
-function run(db, sql, params = []){
-  db.run(sql, params);
-}
-function lastId(db){
-  return db.exec('SELECT last_insert_rowid()')[0].values[0][0];
-}
-
-// ---------- lógica de merge (mesma regra do script Python) ----------
-function findOrCreateLocation(target, source, sourceLocationId, cache){
-  if (sourceLocationId === null || sourceLocationId === undefined) return null;
-  if (cache.has(sourceLocationId)) return cache.get(sourceLocationId);
-
-  const loc = queryOne(source, 'SELECT * FROM Location WHERE LocationId=?', [sourceLocationId]);
-  const existing = queryOne(target,
-    `SELECT LocationId FROM Location
-     WHERE BookNumber IS ? AND ChapterNumber IS ? AND KeySymbol IS ?
-       AND MepsLanguage IS ? AND Type IS ? AND DocumentId IS ? AND Track IS ?`,
-    [loc.BookNumber, loc.ChapterNumber, loc.KeySymbol, loc.MepsLanguage, loc.Type, loc.DocumentId, loc.Track]
-  );
-  if (existing){ cache.set(sourceLocationId, existing.LocationId); return existing.LocationId; }
-
-  run(target,
-    `INSERT INTO Location (BookNumber, ChapterNumber, DocumentId, Track, IssueTagNumber, KeySymbol, MepsLanguage, Type, Title, Specialty, Edition)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-    [loc.BookNumber, loc.ChapterNumber, loc.DocumentId, loc.Track, loc.IssueTagNumber, loc.KeySymbol, loc.MepsLanguage, loc.Type, loc.Title, loc.Specialty, loc.Edition]
-  );
-  const newId = lastId(target);
-  cache.set(sourceLocationId, newId);
-  return newId;
-}
-
-function findOrCreateUserMark(target, source, sourceUserMarkId, newLocationId, cache){
-  if (sourceUserMarkId === null || sourceUserMarkId === undefined) return null;
-  if (cache.has(sourceUserMarkId)) return cache.get(sourceUserMarkId);
-
-  const um = queryOne(source, 'SELECT * FROM UserMark WHERE UserMarkId=?', [sourceUserMarkId]);
-  const existing = queryOne(target, 'SELECT UserMarkId FROM UserMark WHERE UserMarkGuid=?', [um.UserMarkGuid]);
-  if (existing){ cache.set(sourceUserMarkId, existing.UserMarkId); return existing.UserMarkId; }
-
-  run(target,
-    'INSERT INTO UserMark (ColorIndex, LocationId, StyleIndex, UserMarkGuid, Version) VALUES (?,?,?,?,?)',
-    [um.ColorIndex, newLocationId, um.StyleIndex, um.UserMarkGuid, um.Version]
-  );
-  const newId = lastId(target);
-  cache.set(sourceUserMarkId, newId);
-
-  const ranges = queryAll(source, 'SELECT * FROM BlockRange WHERE UserMarkId=?', [sourceUserMarkId]);
-  for (const br of ranges){
-    run(target,
-      'INSERT INTO BlockRange (BlockType, Identifier, StartToken, EndToken, UserMarkId) VALUES (?,?,?,?,?)',
-      [br.BlockType, br.Identifier, br.StartToken, br.EndToken, newId]
-    );
-  }
-  return newId;
-}
-
-function findOrCreateTag(target, source, sourceTagId, cache){
-  if (cache.has(sourceTagId)) return cache.get(sourceTagId);
-  const tag = queryOne(source, 'SELECT Type, Name FROM Tag WHERE TagId=?', [sourceTagId]);
-  const existing = queryOne(target, 'SELECT TagId FROM Tag WHERE Type=? AND Name=?', [tag.Type, tag.Name]);
-  if (existing){ cache.set(sourceTagId, existing.TagId); return existing.TagId; }
-  run(target, 'INSERT INTO Tag (Type, Name) VALUES (?,?)', [tag.Type, tag.Name]);
-  const newId = lastId(target);
-  cache.set(sourceTagId, newId);
-  return newId;
-}
-
-function mergeNotes(target, source){
-  const existingGuids = new Set(queryAll(target, 'SELECT Guid FROM Note').map(r => r.Guid));
-  const beforeCount = existingGuids.size;
-  const sourceNotes = queryAll(source, 'SELECT * FROM Note');
-
-  const locationCache = new Map(), userMarkCache = new Map(), tagCache = new Map();
-  const added = [], skipped = [];
-
-  for (const note of sourceNotes){
-    if (existingGuids.has(note.Guid)){ skipped.push(note.Guid); continue; }
-
-    const newLocationId = findOrCreateLocation(target, source, note.LocationId, locationCache);
-    const newUserMarkId = findOrCreateUserMark(target, source, note.UserMarkId, newLocationId, userMarkCache);
-
-    run(target,
-      `INSERT INTO Note (Guid, UserMarkId, LocationId, Title, Content, LastModified, Created, BlockType, BlockIdentifier)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
-      [note.Guid, newUserMarkId, newLocationId, note.Title, note.Content, note.LastModified, note.Created, note.BlockType, note.BlockIdentifier]
-    );
-    const newNoteId = lastId(target);
-
-    const tagMaps = queryAll(source, 'SELECT TagId FROM TagMap WHERE NoteId=?', [note.NoteId]);
-    for (const tm of tagMaps){
-      const newTagId = findOrCreateTag(target, source, tm.TagId, tagCache);
-      const posRow = queryOne(target, 'SELECT COALESCE(MAX(Position), -1) + 1 AS p FROM TagMap WHERE TagId=?', [newTagId]);
-      run(target, 'INSERT INTO TagMap (PlaylistItemId, LocationId, NoteId, TagId, Position) VALUES (NULL, NULL, ?, ?, ?)', [newNoteId, newTagId, posRow.p]);
-    }
-
-    added.push({ guid: note.Guid, title: note.Title, content: note.Content });
-  }
-
-  return { added, skipped, beforeCount };
-}
-
-// ---------- fluxo principal ----------
+// ---------- fluxo principal (a lógica de merge em si vive em merge-core.js) ----------
 async function readFileAsUint8Array(file){
   const buf = await file.arrayBuffer();
   return new Uint8Array(buf);
 }
 
-async function loadDbFromZip(bytes, label){
-  let zip;
-  try{
-    zip = await JSZip.loadAsync(bytes);
-  } catch(err){
+async function ensureSQL(){
+  if (!SQL){
+    SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}` });
+  }
+  return SQL;
+}
+
+async function loadDbFromZipFriendly(bytes, label){
+  const SQLLib = await ensureSQL();
+  const result = await MergeCore.loadDbFromZip(JSZip, SQLLib, bytes);
+  if (!result.ok){
     throw new FriendlyError(
       `O arquivo (${label}) não parece ser um backup do JW Library. Verifique se escolheu o arquivo .jwlibrary certo.`,
-      `Failed to unzip ${label}: ${err.message}`
+      `[${result.reason}] ${result.error && result.error.message}`
     );
   }
-  const dbEntry = zip.file('userData.db');
-  if (!dbEntry){
+  return result;
+}
+
+async function ensureSourceLoaded(){
+  if (sourceCache && sourceCache.file === sharedFile) return sourceCache;
+  resetSourceCache();
+  const bytes = await readFileAsUint8Array(sharedFile);
+  const { db, zip } = await loadDbFromZipFriendly(bytes, 'arquivo recebido');
+  sourceCache = { file: sharedFile, db, zip };
+  return sourceCache;
+}
+
+function checkForeignKeys(db){
+  const problems = MergeCore.queryAll(db, 'PRAGMA foreign_key_check');
+  if (problems.length > 0){
     throw new FriendlyError(
-      `O arquivo (${label}) não parece ser um backup do JW Library. Verifique se escolheu o arquivo .jwlibrary certo.`,
-      `Não encontrei "userData.db" dentro de ${label}. Confirme que é um backup .jwlibrary válido (e não um .zip renomeado errado).`
+      'Encontramos algo estranho nos dados e paramos por segurança. Nenhum arquivo seu foi alterado — pode tentar de novo.',
+      `Inconsistência detectada via foreign_key_check: ${JSON.stringify(problems)}`
     );
   }
-  const dbBytes = await dbEntry.async('uint8array');
-  const db = new SQL.Database(dbBytes);
-  const hasNoteTable = queryOne(db, "SELECT name FROM sqlite_master WHERE type='table' AND name='Note'");
-  if (!hasNoteTable){
-    throw new FriendlyError(
-      `O arquivo (${label}) não parece ser um backup do JW Library. Verifique se escolheu o arquivo .jwlibrary certo.`,
-      `O arquivo ${label} não parece ter a estrutura esperada do JW Library.`
-    );
+}
+
+function renderNotesList(notes){
+  const ul = $('notesAdded');
+  ul.innerHTML = '';
+  for (const n of notes){
+    const li = document.createElement('li');
+    const title = document.createElement('div');
+    title.textContent = n.title || '(sem título)';
+    const content = document.createElement('span');
+    content.className = 'content';
+    content.textContent = (n.content || '').slice(0, 90);
+    li.appendChild(title);
+    li.appendChild(content);
+    ul.appendChild(li);
   }
-  return { db, zip };
 }
 
 $('mergeBtn').addEventListener('click', async () => {
@@ -516,34 +592,50 @@ $('mergeBtn').addEventListener('click', async () => {
   $('mergeBtn').disabled = true;
   log('Carregando bibliotecas...');
 
+  let targetDb = null;
   try{
-    if (!SQL){
-      SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}` });
-    }
-
     log('Lendo ' + mineFile.name + '...');
     const mineBytes = await readFileAsUint8Array(mineFile);
-    const { db: targetDb, zip: mineZip } = await loadDbFromZip(mineBytes, 'seu arquivo');
+    const { db: loadedTargetDb, zip: mineZip } = await loadDbFromZipFriendly(mineBytes, 'seu arquivo');
+    targetDb = loadedTargetDb;
 
     log('Lendo ' + sharedFile.name + '...');
-    const sharedBytes = await readFileAsUint8Array(sharedFile);
-    const { db: sourceDb } = await loadDbFromZip(sharedBytes, 'arquivo recebido');
+    const { db: sourceDb } = await ensureSourceLoaded();
 
-    log('Comparando notas...');
-    const report = mergeNotes(targetDb, sourceDb);
+    let resultTitleText, tallyText, notesForList;
 
-    log('Verificando se está tudo certo...');
-    const problems = queryAll(targetDb, 'PRAGMA foreign_key_check');
-    if (problems.length > 0){
-      throw new FriendlyError(
-        'Encontramos algo estranho nos dados e paramos por segurança. Nenhum arquivo seu foi alterado — pode tentar de novo.',
-        `Inconsistência detectada via foreign_key_check: ${JSON.stringify(problems)}`
-      );
+    if (mode === 'selected'){
+      const locationIds = selectedLocationIds();
+      log('Copiando os grifos selecionados...');
+      const report = MergeCore.mergeSelectedHighlights(targetDb, sourceDb, locationIds);
+
+      log('Verificando se está tudo certo...');
+      checkForeignKeys(targetDb);
+
+      const totalAfter = report.userMarksReused + report.userMarksAdded;
+      resultTitleText = report.userMarksAdded > 0
+        ? `${report.userMarksAdded} grifo(s) importado(s):`
+        : 'Nenhum grifo novo encontrado nessa seleção';
+      tallyText = `Você já tinha ${report.userMarksReused} grifo(s) nesse(s) artigo(s) + ${report.userMarksAdded} novo(s) = ${totalAfter} grifo(s) no total. ${report.notesAdded.length} nota(s) vieram junto. Nada foi removido ou sobrescrito.`;
+      notesForList = report.notesAdded;
+      log(`${report.userMarksAdded} grifo(s) novo(s), ${report.userMarksReused} já existiam.`, 'ok');
+    } else {
+      log('Comparando notas...');
+      const report = MergeCore.mergeNotes(targetDb, sourceDb);
+
+      log('Verificando se está tudo certo...');
+      checkForeignKeys(targetDb);
+
+      const totalAfter = report.beforeCount + report.added.length;
+      resultTitleText = report.added.length > 0
+        ? `${report.added.length} nota(s) importada(s):`
+        : 'Nenhuma nota nova encontrada';
+      tallyText = `Você já tinha ${report.beforeCount} nota(s) + ${report.added.length} nova(s) = ${totalAfter} nota(s) no total. Nada foi removido ou sobrescrito.`;
+      notesForList = report.added;
+      log(`${report.added.length} nota(s) nova(s), ${report.skipped.length} já existiam e foram ignoradas.`, 'ok');
     }
 
-    log(`${report.added.length} nota(s) nova(s), ${report.skipped.length} já existiam e foram ignoradas.`, 'ok');
     log('Gerando arquivo final...');
-
     const newDbBytes = targetDb.export();
     mineZip.file('userData.db', newDbBytes);
     const blob = await mineZip.generateAsync({ type: 'blob', mimeType: 'application/octet-stream' });
@@ -555,35 +647,18 @@ $('mergeBtn').addEventListener('click', async () => {
     dl.download = outName;
     dl.textContent = 'Baixar ' + outName;
 
-    $('resultTitle').textContent = report.added.length > 0
-      ? `${report.added.length} nota(s) importada(s):`
-      : 'Nenhuma nota nova encontrada';
-
-    const totalAfter = report.beforeCount + report.added.length;
-    $('tallyText').textContent =
-      `Você já tinha ${report.beforeCount} nota(s) + ${report.added.length} nova(s) = ${totalAfter} nota(s) no total. Nada foi removido ou sobrescrito.`;
-
-    const ul = $('notesAdded');
-    ul.innerHTML = '';
-    for (const n of report.added){
-      const li = document.createElement('li');
-      const title = document.createElement('div');
-      title.textContent = n.title || '(sem título)';
-      const content = document.createElement('span');
-      content.className = 'content';
-      content.textContent = (n.content || '').slice(0, 90);
-      li.appendChild(title);
-      li.appendChild(content);
-      ul.appendChild(li);
-    }
+    $('resultTitle').textContent = resultTitleText;
+    $('tallyText').textContent = tallyText;
+    renderNotesList(notesForList);
     $('result').classList.add('show');
 
     targetDb.close();
-    sourceDb.close();
+    targetDb = null;
   } catch(err){
     showError(err);
   } finally {
-    $('mergeBtn').disabled = false;
+    if (targetDb){ try{ targetDb.close(); }catch(e){} }
+    updateButton();
   }
 });
 </script>

@@ -1,0 +1,13 @@
+{
+  "name": "note-import",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Ferramenta para mesclar notas e grifos de backups .jwlibrary do JW Library",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "jszip": "3.10.1",
+    "sql.js": "1.10.3"
+  }
+}
