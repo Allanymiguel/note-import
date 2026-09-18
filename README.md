@@ -1,8 +1,8 @@
 # note-import
 
-Ferramenta web para mesclar **notas e grifos/marcações** de backups `.jwlibrary` do JW Library — pensada para uso pessoal entre amigos e familiares que trocam anotações.
+Adicione notas, etiquetas e grifo/marcação de publicações ao seu JW Library usando backup de outro dispositivo.
 
-Tudo roda **inteiramente no navegador**: nenhum arquivo é enviado para nenhum servidor. Os dois `.jwlibrary` selecionados são lidos localmente, mesclados em memória, e o resultado é oferecido como download — os arquivos originais nunca são alterados.
+Tudo roda **inteiramente no navegador**. Os dois `.jwlibrary` selecionados são lidos localmente, mesclados em memória, e o resultado é oferecido como download — os arquivos originais nunca são alterados.
 
 ## Como usar
 
