@@ -261,3 +261,59 @@ test('listHighlightGroups: prioritizes Title, falls back to book/chapter label f
   assert.ok(byLabel['Livro 43, capítulo 3']);
   assert.equal(byLabel['Livro 43, capítulo 3'].count, 2);
 });
+
+test('formatIssueLabel: formats "{Publicação} - {mês}/{ano}" for mwb, w and wcg', () => {
+  assert.equal(MergeCore.formatIssueLabel('w', 20260700), 'A Sentinela - julho/2026');
+  assert.equal(MergeCore.formatIssueLabel('mwb', 20241100), 'Apostila - novembro/2024');
+  assert.equal(MergeCore.formatIssueLabel('wcg', 20250100), 'Ande Corajosamente com Deus - janeiro/2025');
+});
+
+test('listFilteredPublicationGroups: only lists mwb/w/wcg, excludes other KeySymbols', async () => {
+  const source = await createEmptyDb();
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, KeySymbol: 'w', IssueTagNumber: 20260700 }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'g1' }));
+
+  // KeySymbol fora da lista permitida — não deve aparecer.
+  insertRow(source, 'Location', locationDefaults({ LocationId: 2, KeySymbol: 'nwt', IssueTagNumber: 20260700 }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 2, LocationId: 2, UserMarkGuid: 'g2' }));
+
+  const groups = MergeCore.listFilteredPublicationGroups(source);
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].label, 'A Sentinela - julho/2026');
+  assert.equal(groups[0].count, 1);
+});
+
+test('listFilteredPublicationGroups: groups by publication, sorts by most recent, caps at 5 per publication', async () => {
+  const source = await createEmptyDb();
+
+  // 7 edições de "A Sentinela", meses diferentes de 2024/2025, mais de 5.
+  const wIssues = [20240100, 20240300, 20240500, 20240700, 20240900, 20241100, 20250100];
+  let locId = 1, umId = 1;
+  for (const issue of wIssues) {
+    insertRow(source, 'Location', locationDefaults({ LocationId: locId, KeySymbol: 'w', IssueTagNumber: issue }));
+    insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: umId, LocationId: locId, UserMarkGuid: `w-${issue}` }));
+    locId++; umId++;
+  }
+
+  // 2 edições de "Apostila", bem abaixo do limite.
+  for (const issue of [20260100, 20260300]) {
+    insertRow(source, 'Location', locationDefaults({ LocationId: locId, KeySymbol: 'mwb', IssueTagNumber: issue }));
+    insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: umId, LocationId: locId, UserMarkGuid: `mwb-${issue}` }));
+    locId++; umId++;
+  }
+
+  const groups = MergeCore.listFilteredPublicationGroups(source);
+  const wGroups = groups.filter(g => g.label.startsWith('A Sentinela'));
+  const mwbGroups = groups.filter(g => g.label.startsWith('Apostila'));
+
+  assert.equal(wGroups.length, 5, 'no máximo 5 edições de A Sentinela, mesmo havendo 7 no arquivo');
+  assert.equal(mwbGroups.length, 2);
+
+  // As 5 mostradas devem ser as mais recentes (jan/2025 até set/2024), não as mais antigas.
+  assert.deepEqual(
+    wGroups.map(g => g.label),
+    ['A Sentinela - janeiro/2025', 'A Sentinela - novembro/2024', 'A Sentinela - setembro/2024', 'A Sentinela - julho/2024', 'A Sentinela - maio/2024']
+  );
+});

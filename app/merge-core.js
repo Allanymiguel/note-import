@@ -183,6 +183,83 @@
       .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
   }
 
+  // ---------- listagem filtrada de publicações (tela "grifos de um artigo específico") ----------
+  const PUBLICATION_LABELS = { w: 'A Sentinela', mwb: 'Apostila', wcg: 'Ande Corajosamente com Deus' };
+  const MONTH_NAMES_PT = [
+    'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+    'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'
+  ];
+
+  // IssueTagNumber guarda ano+mês como YYYYMM00 (ex: 20260700 = julho/2026).
+  function formatIssueLabel(keySymbol, issueTagNumber) {
+    const friendly = PUBLICATION_LABELS[keySymbol] || keySymbol;
+    const year = Math.floor(issueTagNumber / 10000);
+    const month = Math.floor(issueTagNumber / 100) % 100;
+    const monthName = MONTH_NAMES_PT[month - 1] || `mês ${month}`;
+    return `${friendly} - ${monthName}/${year}`;
+  }
+
+  // Lista, para a tela de escolha de artigo específico, apenas grifos de
+  // publicações periódicas conhecidas (Sentinela/Apostila/Ande Corajosamente
+  // com Deus), agrupados por edição (KeySymbol + IssueTagNumber) e limitados
+  // às `maxPerPublication` edições mais recentes de cada publicação. Isso é
+  // só um filtro de EXIBIÇÃO: não descarta nem altera nenhum dado do arquivo
+  // de origem, só o que aparece pré-selecionável nessa tela.
+  function listFilteredPublicationGroups(source, maxPerPublication = 5) {
+    const allowedKeys = Object.keys(PUBLICATION_LABELS);
+
+    const marks = queryAll(source, 'SELECT UserMarkId, LocationId FROM UserMark');
+    const countByLocation = new Map();
+    for (const m of marks) {
+      if (m.LocationId === null || m.LocationId === undefined) continue;
+      countByLocation.set(m.LocationId, (countByLocation.get(m.LocationId) || 0) + 1);
+    }
+
+    const issueGroups = new Map(); // `${KeySymbol}:${IssueTagNumber}` -> { keySymbol, issueTagNumber, locationIds, count }
+    for (const locId of countByLocation.keys()) {
+      const loc = queryOne(source, 'SELECT * FROM Location WHERE LocationId=?', [locId]);
+      if (!loc) continue;
+      if (!allowedKeys.includes(loc.KeySymbol)) continue;
+      if (loc.IssueTagNumber === null || loc.IssueTagNumber === undefined) continue;
+
+      const issueKey = `${loc.KeySymbol}:${loc.IssueTagNumber}`;
+      if (!issueGroups.has(issueKey)) {
+        issueGroups.set(issueKey, {
+          keySymbol: loc.KeySymbol,
+          issueTagNumber: loc.IssueTagNumber,
+          locationIds: new Set(),
+          count: 0
+        });
+      }
+      const g = issueGroups.get(issueKey);
+      g.locationIds.add(locId);
+      g.count += countByLocation.get(locId);
+    }
+
+    const byKeySymbol = new Map();
+    for (const g of issueGroups.values()) {
+      if (!byKeySymbol.has(g.keySymbol)) byKeySymbol.set(g.keySymbol, []);
+      byKeySymbol.get(g.keySymbol).push(g);
+    }
+
+    const result = [];
+    for (const keySymbol of allowedKeys) {
+      const mostRecentFirst = (byKeySymbol.get(keySymbol) || [])
+        .sort((a, b) => b.issueTagNumber - a.issueTagNumber)
+        .slice(0, maxPerPublication);
+
+      for (const g of mostRecentFirst) {
+        result.push({
+          key: `${g.keySymbol}:${g.issueTagNumber}`,
+          label: formatIssueLabel(g.keySymbol, g.issueTagNumber),
+          count: g.count,
+          locationIds: Array.from(g.locationIds)
+        });
+      }
+    }
+    return result;
+  }
+
   // Mescla para o destino APENAS os grifos (UserMark) cujo LocationId esteja
   // em selectedLocationIds, seus BlockRange, a Location correspondente, e
   // qualquer Note ligada a esses grifos (com seus Tag/TagMap), reaproveitando
@@ -252,6 +329,8 @@
     buildLocationLabel,
     groupKeyForLocation,
     listHighlightGroups,
+    formatIssueLabel,
+    listFilteredPublicationGroups,
     mergeSelectedHighlights,
     loadDbFromZip
   };

@@ -167,7 +167,7 @@ function renderGroupList(groups){
   const list = $('groupList');
   list.innerHTML = '';
   if (groups.length === 0){
-    $('groupPickerHint').textContent = 'Esse arquivo não tem nenhum grifo para importar.';
+    $('groupPickerHint').textContent = 'Não encontramos grifos em A Sentinela, Apostila ou Ande Corajosamente com Deus nesse arquivo.';
     return;
   }
   $('groupPickerHint').textContent = 'Marque de onde você quer copiar os grifos:';
@@ -200,7 +200,7 @@ async function loadGroupsIntoPicker(){
   $('groupList').innerHTML = '';
   try{
     const { db } = await ensureSourceLoaded();
-    renderGroupList(MergeCore.listHighlightGroups(db));
+    renderGroupList(MergeCore.listFilteredPublicationGroups(db));
   } catch(err){
     showError(err);
     $('groupPickerHint').textContent = 'Não foi possível carregar a lista.';
