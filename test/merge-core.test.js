@@ -88,6 +88,83 @@ test('mergeNotes ("Importar apenas notas"): never imports a pure highlight witho
   assert.deepEqual(fkProblems(target), []);
 });
 
+test('mergeEverything ("Importar tudo"): imports pure highlights AND notes, unlike mergeNotes', async () => {
+  const target = await createEmptyDb();
+  const source = await createEmptyDb();
+
+  // Mesmo cenário do teste acima: um grifo puro (sem nota) e um grifo com nota.
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, Title: 'Artigo com grifo solto' }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'solto-um' }));
+  insertRow(source, 'BlockRange', { BlockRangeId: 1, BlockType: 1, Identifier: 1, StartToken: 0, EndToken: 5, UserMarkId: 1 });
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 2, Title: 'Artigo com nota' }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 2, LocationId: 2, UserMarkGuid: 'com-nota-um' }));
+  insertRow(source, 'BlockRange', { BlockRangeId: 2, BlockType: 1, Identifier: 1, StartToken: 0, EndToken: 5, UserMarkId: 2 });
+  insertRow(source, 'Note', noteDefaults({ NoteId: 1, Guid: 'note-guid', UserMarkId: 2, LocationId: 2, Title: 'Comentário' }));
+
+  const report = MergeCore.mergeEverything(target, source);
+
+  assert.equal(report.userMarksAdded, 2, 'diferente de mergeNotes, o grifo solto TAMBÉM deve ser importado');
+  assert.equal(report.userMarksReused, 0);
+  assert.equal(report.notesAdded.length, 1);
+  assert.equal(countRows(target, 'UserMark'), 2);
+  assert.equal(countRows(target, 'Note'), 1);
+
+  assert.ok(MergeCore.queryOne(target, "SELECT * FROM UserMark WHERE UserMarkGuid='solto-um'"), 'grifo solto deve estar presente no destino');
+  assert.ok(MergeCore.queryOne(target, "SELECT * FROM UserMark WHERE UserMarkGuid='com-nota-um'"));
+
+  assert.deepEqual(fkProblems(target), []);
+});
+
+test('mergeEverything: also imports a Note that has no UserMark at all', async () => {
+  const target = await createEmptyDb();
+  const source = await createEmptyDb();
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, Title: 'Parágrafo comentado sem grifo' }));
+  insertRow(source, 'Note', noteDefaults({ NoteId: 1, Guid: 'no-mark-note', UserMarkId: null, LocationId: 1, Title: 'Nota sem grifo' }));
+
+  const report = MergeCore.mergeEverything(target, source);
+
+  assert.equal(report.userMarksAdded, 0);
+  assert.equal(report.notesAdded.length, 1);
+  assert.equal(countRows(target, 'Note'), 1);
+  const inserted = MergeCore.queryOne(target, "SELECT * FROM Note WHERE Guid='no-mark-note'");
+  assert.ok(inserted);
+  assert.equal(inserted.UserMarkId, null);
+
+  assert.deepEqual(fkProblems(target), []);
+});
+
+test('mergeEverything: idempotent — running twice does not duplicate highlights or notes', async () => {
+  const target = await createEmptyDb();
+  const source = await createEmptyDb();
+
+  insertRow(source, 'Location', locationDefaults({ LocationId: 1, Title: 'Artigo' }));
+  insertRow(source, 'UserMark', userMarkDefaults({ UserMarkId: 1, LocationId: 1, UserMarkGuid: 'um-1' }));
+  insertRow(source, 'Note', noteDefaults({ NoteId: 1, Guid: 'note-1', UserMarkId: 1, LocationId: 1, Title: 'Comentário' }));
+
+  MergeCore.mergeEverything(target, source);
+  const countsAfterFirst = {
+    UserMark: countRows(target, 'UserMark'),
+    Note: countRows(target, 'Note'),
+    Location: countRows(target, 'Location')
+  };
+
+  const second = MergeCore.mergeEverything(target, source);
+  assert.equal(second.userMarksAdded, 0);
+  assert.equal(second.userMarksReused, 1);
+  assert.equal(second.notesAdded.length, 0);
+
+  assert.deepEqual(
+    {
+      UserMark: countRows(target, 'UserMark'),
+      Note: countRows(target, 'Note'),
+      Location: countRows(target, 'Location')
+    },
+    countsAfterFirst
+  );
+});
+
 test('mergeSelectedHighlights: imports a "pure" highlight (no note) correctly', async () => {
   const target = await createEmptyDb();
   const source = await createEmptyDb();

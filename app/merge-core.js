@@ -128,12 +128,42 @@
   }
 
   // Mescla TODAS as notas da origem para o destino (comportamento original).
+  // Como só segue Note.UserMarkId, nunca traz um grifo "solto" (sem nota).
   function mergeNotes(target, source) {
     const beforeCount = queryOne(target, 'SELECT COUNT(*) AS c FROM Note').c;
     const sourceNotes = queryAll(source, 'SELECT * FROM Note');
     const caches = { locationCache: new Map(), userMarkCache: new Map(), tagCache: new Map() };
     const result = mergeNoteList(target, source, sourceNotes, caches);
     return { added: result.added, skipped: result.skipped, beforeCount };
+  }
+
+  // Mescla TUDO da origem para o destino: todo UserMark (grifo), tenha ou
+  // não nota associada, e toda Note (mesmo sem UserMark). Reaproveita as
+  // mesmas funções de dedup por chave natural/Guid usadas em todo o resto —
+  // nenhuma lógica nova de resolução de entidades.
+  function mergeEverything(target, source) {
+    const caches = { locationCache: new Map(), userMarkCache: new Map(), tagCache: new Map() };
+
+    const sourceUserMarks = queryAll(source, 'SELECT * FROM UserMark');
+    let userMarksAdded = 0, userMarksReused = 0;
+    for (const um of sourceUserMarks) {
+      const alreadyInTarget = queryOne(target, 'SELECT UserMarkId FROM UserMark WHERE UserMarkGuid=?', [um.UserMarkGuid]);
+      const newLocationId = findOrCreateLocation(target, source, um.LocationId, caches.locationCache);
+      findOrCreateUserMark(target, source, um.UserMarkId, newLocationId, caches.userMarkCache);
+      if (alreadyInTarget) userMarksReused++; else userMarksAdded++;
+    }
+
+    const beforeNoteCount = queryOne(target, 'SELECT COUNT(*) AS c FROM Note').c;
+    const sourceNotes = queryAll(source, 'SELECT * FROM Note');
+    const noteResult = mergeNoteList(target, source, sourceNotes, caches);
+
+    return {
+      userMarksAdded,
+      userMarksReused,
+      notesAdded: noteResult.added,
+      notesSkipped: noteResult.skipped,
+      beforeNoteCount
+    };
   }
 
   // ---------- agrupamento de grifos por artigo/publicação/capítulo ----------
@@ -499,6 +529,7 @@
     findOrCreateTag,
     mergeNoteList,
     mergeNotes,
+    mergeEverything,
     buildLocationLabel,
     groupKeyForLocation,
     listHighlightGroups,

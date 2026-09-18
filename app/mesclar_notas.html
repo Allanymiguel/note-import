@@ -93,6 +93,7 @@
     </p>
     <ul class="notes-added" id="notesAdded"></ul>
     <a class="download-btn" id="downloadLink" download><span class="download-icon" aria-hidden="true">⬇️</span><span id="downloadLinkText">Baixar arquivo mesclado</span></a>
+    <p class="no-changes-hint" id="noChangesHint">Nada para baixar — os dois arquivos já estão sincronizados nesse quesito.</p>
   </div>
 
   <footer>
@@ -260,6 +261,8 @@ function clearLog(){
   $('result').classList.remove('show');
   $('errorBox').classList.remove('show');
   $('overlapConfirm').classList.remove('show');
+  $('downloadLink').classList.remove('hidden');
+  $('noChangesHint').classList.remove('show');
 }
 
 // Erro com mensagem simples para o usuário e detalhe técnico só no console/expansível.
@@ -376,7 +379,7 @@ $('mergeBtn').addEventListener('click', async () => {
     log('Lendo ' + sharedFile.name + '...');
     const { db: sourceDb } = await ensureSourceLoaded();
 
-    let resultTitleText, tallyText, notesForList;
+    let resultTitleText, tallyText, notesForList, hasChanges;
 
     if (mode === 'selected'){
       const locationIds = selectedLocationIds();
@@ -401,13 +404,16 @@ $('mergeBtn').addEventListener('click', async () => {
       checkForeignKeys(targetDb);
 
       const totalAfter = report.userMarksReused + report.userMarksAdded;
+      hasChanges = report.userMarksAdded > 0 || report.notesAdded.length > 0;
       resultTitleText = report.userMarksAdded > 0
         ? `${report.userMarksAdded} grifo(s) importado(s):`
         : 'Nenhum grifo novo encontrado nessa seleção';
       tallyText = `Você já tinha ${report.userMarksReused} grifo(s) nesse(s) artigo(s) + ${report.userMarksAdded} novo(s) = ${totalAfter} grifo(s) no total. ${report.notesAdded.length} nota(s) vieram junto. Nada foi removido ou sobrescrito.`;
       notesForList = report.notesAdded;
       log(`${report.userMarksAdded} grifo(s) novo(s), ${report.userMarksReused} já existiam.`, 'ok');
-    } else {
+
+      awaitingSelectionChange = true;
+    } else if (mode === 'notes'){
       log('Comparando notas...');
       const report = MergeCore.mergeNotes(targetDb, sourceDb);
 
@@ -415,33 +421,53 @@ $('mergeBtn').addEventListener('click', async () => {
       checkForeignKeys(targetDb);
 
       const totalAfter = report.beforeCount + report.added.length;
+      hasChanges = report.added.length > 0;
       resultTitleText = report.added.length > 0
         ? `${report.added.length} nota(s) importada(s):`
         : 'Nenhuma nota nova encontrada';
       tallyText = `Você já tinha ${report.beforeCount} nota(s) + ${report.added.length} nova(s) = ${totalAfter} nota(s) no total. Nada foi removido ou sobrescrito.`;
       notesForList = report.added;
       log(`${report.added.length} nota(s) nova(s), ${report.skipped.length} já existiam e foram ignoradas.`, 'ok');
+    } else {
+      // 'all': diferente de 'notes', também traz grifos soltos (sem nota associada).
+      log('Comparando notas e marcações...');
+      const report = MergeCore.mergeEverything(targetDb, sourceDb);
+
+      log('Verificando se está tudo certo...');
+      checkForeignKeys(targetDb);
+
+      const totalHighlightsAfter = report.userMarksReused + report.userMarksAdded;
+      const totalNotesAfter = report.beforeNoteCount + report.notesAdded.length;
+      hasChanges = report.userMarksAdded > 0 || report.notesAdded.length > 0;
+      resultTitleText = hasChanges
+        ? `${report.userMarksAdded} grifo(s) e ${report.notesAdded.length} nota(s) importado(s):`
+        : 'Nenhuma novidade encontrada';
+      tallyText = `Você já tinha ${report.userMarksReused} grifo(s) + ${report.userMarksAdded} novo(s) = ${totalHighlightsAfter} grifo(s), e ${report.beforeNoteCount} nota(s) + ${report.notesAdded.length} nova(s) = ${totalNotesAfter} nota(s) no total. Nada foi removido ou sobrescrito.`;
+      notesForList = report.notesAdded;
+      log(`${report.userMarksAdded} grifo(s) novo(s) e ${report.notesAdded.length} nota(s) nova(s); o resto já existia.`, 'ok');
     }
-
-    log('Gerando arquivo final...');
-    const newDbBytes = targetDb.export();
-    mineZip.file('userData.db', newDbBytes);
-    const blob = await mineZip.generateAsync({ type: 'blob', mimeType: 'application/octet-stream' });
-
-    const url = URL.createObjectURL(blob);
-    const outName = mineFile.name.replace(/\.jwlibrary$/i, '') + '_mesclado.jwlibrary';
-    const dl = $('downloadLink');
-    dl.href = url;
-    dl.download = outName;
-    $('downloadLinkText').textContent = 'Baixar ' + outName;
 
     $('resultTitle').textContent = resultTitleText;
     $('tallyText').textContent = tallyText;
     renderNotesList(notesForList);
     $('result').classList.add('show');
 
-    if (mode === 'selected'){
-      awaitingSelectionChange = true;
+    if (hasChanges){
+      log('Gerando arquivo final...');
+      const newDbBytes = targetDb.export();
+      mineZip.file('userData.db', newDbBytes);
+      const blob = await mineZip.generateAsync({ type: 'blob', mimeType: 'application/octet-stream' });
+
+      const url = URL.createObjectURL(blob);
+      const outName = mineFile.name.replace(/\.jwlibrary$/i, '') + '_mesclado.jwlibrary';
+      const dl = $('downloadLink');
+      dl.href = url;
+      dl.download = outName;
+      $('downloadLinkText').textContent = 'Baixar ' + outName;
+    } else {
+      log('Nada mudou, então não há arquivo novo para baixar.', 'ok');
+      $('downloadLink').classList.add('hidden');
+      $('noChangesHint').classList.add('show');
     }
 
     targetDb.close();

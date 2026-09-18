@@ -317,7 +317,16 @@ a.download-btn{
   transition:background .15s ease;
 }
 a.download-btn:hover{background:rgba(201,162,39,0.1);}
+a.download-btn.hidden{display:none;}
 .download-icon{font-size:1rem; line-height:1;}
+.no-changes-hint{
+  display:none;
+  margin:0;
+  font-size:0.88rem;
+  color:var(--paper-dim);
+  font-style:italic;
+}
+.no-changes-hint.show{display:block;}
 
 footer{
   margin-top:56px;
